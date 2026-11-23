@@ -19,7 +19,7 @@ fn topics_config_map_keys_default_when_omitted() {
 
     assert_eq!(config_map.name, "restore-topics");
     assert_eq!(config_map.topics_key, "topics");
-    assert_eq!(config_map.topic_mapping_key, "topic_mappings");
+    assert_eq!(config_map.topic_mappings_key, "topic_mappings");
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn topics_config_map_custom_keys_round_trip_with_camel_case() {
         .as_ref()
         .expect("ConfigMap reference is present");
     assert_eq!(config_map.topics_key, "included-topics");
-    assert_eq!(config_map.topic_mapping_key, "topic-mappings");
+    assert_eq!(config_map.topic_mappings_key, "topic-mappings");
 
     let serialized = serde_json::to_value(spec).expect("restore spec serialises");
     assert_eq!(
