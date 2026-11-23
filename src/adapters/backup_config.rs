@@ -164,9 +164,7 @@ pub async fn build_topic_config(
         "Building topic config from configuration",
     );
     if !topics_config_map.is_none() && (!topics.is_empty() || !exclude_topics.is_empty()) {
-        return Err(Error::Config(format!(
-            "Cannot specify both 'topics'/'exclude_topics' and 'topics_config_map' simultaneously"
-        )));
+        return Err(Error::Config("Cannot specify both 'topics'/'exclude_topics' and 'topics_config_map' simultaneously".to_string()));
     }
     if let Some(config_map) = topics_config_map {
         let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
@@ -208,9 +206,7 @@ pub async fn build_topic_config(
         };
         Ok(result)
     } else {
-        return Err(Error::Config(format!(
-            "Either 'topics' or 'topics_config_map' must be specified, but neither have been provided"
-        )));
+        Err(Error::Config("Either 'topics' or 'topics_config_map' must be specified, but neither have been provided".to_string()))
     }
 }
 
