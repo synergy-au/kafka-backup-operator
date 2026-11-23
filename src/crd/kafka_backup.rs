@@ -27,19 +27,21 @@ pub struct KafkaBackupSpec {
     /// Kafka cluster connection configuration
     pub kafka_cluster: KafkaClusterSpec,
 
-    /// Topics to backup
+    /// List of topics to backup
+    /// Either specify topics here or use `topics_config_map`. Will error if both are specified.
     #[serde(default)]
     pub topics: Vec<String>,
 
     /// Topics to leave out, names or globs (* and ?). Applied after `topics`, so
     /// `topics: ["*"]` with an exclude list also backs up every topic created later.
+    /// Will error if both `exclude_topics` and `topics_config_map` are specified.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_topics: Vec<String>,
 
     /// ConfigMap containing topic definitions to include/exclude
     /// The `name` field specifies the ConfigMap name.
-    /// The `key` field specifies the key within the ConfigMap containing topic definitions to include.
-    /// The `exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
+    /// The `topics_key` field specifies the key within the ConfigMap containing topic definitions to include.
+    /// The `topics_exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topics_config_map: Option<TopicConfigMap>,
 

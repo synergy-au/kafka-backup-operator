@@ -32,13 +32,14 @@ pub struct KafkaRestoreSpec {
     pub kafka_cluster: KafkaClusterSpec,
 
     /// Topics to restore (empty = all topics from backup)
+    /// Will error if both `kafka_cluster` and `topics_config_map` are specified.
     #[serde(default)]
     pub topics: Vec<String>,
 
     /// ConfigMap containing topic definitions to include/exclude
     /// The `name` field specifies the ConfigMap name.
-    /// The `key` field specifies the key within the ConfigMap containing topic definitions to include.
-    /// The `exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
+    /// The `topics_key` field specifies the key within the ConfigMap containing topic definitions to include.
+    /// The `topic_mapping_key` field specifies the key within the ConfigMap containing topic mapping definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub topics_config_map: Option<TopicRestoreConfigMap>,
 
@@ -47,6 +48,7 @@ pub struct KafkaRestoreSpec {
     pub pitr: Option<PitrSpec>,
 
     /// Topic remapping (source -> target)
+    /// Will error if both `topic_mapping` and `topics_config_map` are specified.
     #[serde(default)]
     pub topic_mapping: std::collections::HashMap<String, String>,
 
