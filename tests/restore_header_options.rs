@@ -118,6 +118,7 @@ fn struct_literal_fields_are_present() {
         topics: vec![],
         pitr: None,
         topic_mapping: HashMap::new(),
+        topics_config_map: None,
         partition_mapping: HashMap::new(),
         repartitioning: HashMap::new(),
         offset_reset: None,

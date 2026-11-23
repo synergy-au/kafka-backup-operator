@@ -57,6 +57,7 @@ fn restore_with_storage_ref() -> KafkaRestore {
             topics: vec!["orders".to_string()],
             pitr: None,
             topic_mapping: HashMap::new(),
+            topics_config_map: None,
             partition_mapping: HashMap::new(),
             repartitioning: HashMap::new(),
             offset_reset: None,

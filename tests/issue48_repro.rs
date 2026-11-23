@@ -24,6 +24,7 @@ fn restore_spec() -> KafkaRestoreSpec {
         pitr: None,
         topic_mapping: HashMap::new(),
         partition_mapping: HashMap::new(),
+        topics_config_map: None,
         repartitioning: HashMap::new(),
         offset_reset: None,
         rollback: None,
