@@ -35,6 +35,13 @@ pub struct KafkaRestoreSpec {
     #[serde(default)]
     pub topics: Vec<String>,
 
+    /// ConfigMap containing topic definitions to include/exclude
+    /// The `name` field specifies the ConfigMap name.
+    /// The `key` field specifies the key within the ConfigMap containing topic definitions to include.
+    /// The `exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topics_config_map: Option<TopicRestoreConfigMap>,
+
     /// Point-in-time recovery configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pitr: Option<PitrSpec>,
@@ -127,6 +134,30 @@ pub struct KafkaRestoreSpec {
     /// scans; `skip` never scans and turns preflight errors into warnings.
     #[serde(default)]
     pub header_preflight: HeaderPreflightPolicy,
+}
+
+/// Topic Kubernetes ConfigMap reference
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TopicRestoreConfigMap {
+    /// Name of the ConfigMap containing topic definitions
+    pub name: String,
+
+    /// Key within the ConfigMap containing topic definitions (defaults to "topics")
+    #[serde(default = "default_topic_restore_config_map_key")]
+    pub topics_key: String,
+
+    /// Key within the ConfigMap containing topic definitions to exclude (defaults to "topic_mappings")
+    #[serde(default = "default_topic_mapping_config_map_key")]
+    pub topic_mapping_key: String,
+}
+
+fn default_topic_restore_config_map_key() -> String {
+    "topics".to_string()
+}
+
+fn default_topic_mapping_config_map_key() -> String {
+    "topic_mappings".to_string()
 }
 
 /// Header preflight mode for a restore

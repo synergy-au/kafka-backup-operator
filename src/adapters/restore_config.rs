@@ -2,15 +2,16 @@
 //!
 //! Converts KafkaRestore CRD spec to kafka-backup-core configuration.
 
+use k8s_openapi::api::core::v1::ConfigMap;
+use kube::{api::Api, Client};
 use std::collections::HashMap;
-
-use kube::Client;
+use tracing::debug;
 
 use crate::crd::{
     BackupRef, HeaderPreflightPolicy, KafkaRestore, OffsetResetSpec, PitrSpec, RollbackSpec,
-    TopicRepartitioningSpec,
+    TopicRepartitioningSpec, TopicRestoreConfigMap,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::backup_config::{
     build_kafka_config, ResolvedCircuitBreakerConfig, ResolvedKafkaConfig,
@@ -116,6 +117,80 @@ pub struct ResolvedOffsetResetConfig {
     pub strategy: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ResolvedTopicRestoreConfig {
+    pub topics: Vec<String>,
+    pub topic_mappings: std::collections::HashMap<String, String>,
+}
+
+/// Build fully resolved topic configuration from deployed CRD resource and ConfigMap (if provided)
+pub async fn build_topic_restore_config(
+    topics: &Vec<String>,
+    topic_mappings: &std::collections::HashMap<String, String>,
+    topics_config_map: &Option<TopicRestoreConfigMap>,
+    client: &Client,
+    namespace: &str,
+) -> Result<ResolvedTopicRestoreConfig> {
+    debug!(
+        topics = ?topics,
+        topic_mappings = ?topic_mappings,
+        topics_config_map = ?topics_config_map,
+        "Building topic config from configuration",
+    );
+    if !topics_config_map.is_none() && (!topics.is_empty() || !topic_mappings.is_empty()) {
+        return Err(Error::Config(format!(
+            "Cannot specify 'topics'/'topic_mappings' and 'topics_config_map' simultaneously"
+        )));
+    }
+    if let Some(config_map) = topics_config_map {
+        let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
+        let config: ConfigMap = config_maps.get(&config_map.name).await?;
+
+        // Resolve topic list from ConfigMap data using the specified key
+        let resolved_included: Vec<String> = config
+            .data
+            .as_ref()
+            .and_then(|data| data.get(&config_map.topics_key))
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let resolved_mappings: std::collections::HashMap<String, String> = config
+            .data
+            .as_ref()
+            .and_then(|data| data.get(&config_map.topic_mapping_key))
+            .map(|v| {
+                v.split(',')
+                    .filter_map(|mapping| {
+                        let (source, target) = mapping.split_once(':')?;
+                        Some((source.trim().to_string(), target.trim().to_string()))
+                    })
+                    .collect::<std::collections::HashMap<String, String>>()
+            })
+            .unwrap_or_default();
+
+        let resolved = ResolvedTopicRestoreConfig {
+            topics: resolved_included,
+            topic_mappings: resolved_mappings,
+        };
+
+        Ok(resolved)
+    } else if !topics.is_empty() {
+        let result: ResolvedTopicRestoreConfig = ResolvedTopicRestoreConfig {
+            topics: topics.clone(),
+            topic_mappings: topic_mappings.clone(),
+        };
+        Ok(result)
+    } else {
+        return Err(Error::Config(format!(
+            "Either 'topics' or 'topics_config_map' must be specified, but neither have been provided"
+        )));
+    }
+}
+
 /// Build fully resolved restore configuration from CRD
 pub async fn build_restore_config(
     restore: &KafkaRestore,
@@ -127,6 +202,16 @@ pub async fn build_restore_config(
 
     // Resolve Kafka configuration
     let kafka = build_kafka_config(&restore.spec.kafka_cluster, client, namespace).await?;
+
+    // Resolve topic restore configuration
+    let topics = build_topic_restore_config(
+        &restore.spec.topics,
+        &restore.spec.topic_mapping,
+        &restore.spec.topics_config_map,
+        client,
+        namespace,
+    )
+    .await?;
 
     // Build PITR config
     let pitr = restore.spec.pitr.as_ref().map(build_pitr_config);
@@ -162,8 +247,8 @@ pub async fn build_restore_config(
     Ok(ResolvedRestoreConfig {
         backup_source,
         kafka,
-        topics: restore.spec.topics.clone(),
-        topic_mapping: restore.spec.topic_mapping.clone(),
+        topics: topics.topics,
+        topic_mapping: topics.topic_mappings,
         partition_mapping: restore.spec.partition_mapping.clone(),
         repartitioning: restore
             .spec
