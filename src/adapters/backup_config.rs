@@ -145,21 +145,21 @@ pub struct ResolvedBackupOptionsConfig {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedTopicConfig {
-    pub topics: Vec<String>,
-    pub excluded_topics: Vec<String>,
+    pub include_topics: Vec<String>,
+    pub exclude_topics: Vec<String>,
 }
 
 /// Build fully resolved topic configuration from CRD  and ConfigMap
 pub async fn build_topic_config(
     topics: &Vec<String>,
-    topics_excluded: &Vec<String>,
+    exclude_topics: &Vec<String>,
     topics_config_map: &Option<TopicConfigMap>,
     client: &Client,
     namespace: &str,
 ) -> Result<ResolvedTopicConfig> {
     debug!(
         topics = ?topics,
-        topics_excluded = ?topics_excluded,
+        exclude_topics = ?exclude_topics,
         topics_config_map = ?topics_config_map,
         "Building topic config from configuration",
     );
@@ -196,20 +196,20 @@ pub async fn build_topic_config(
             .unwrap_or_default();
 
         let resolved = ResolvedTopicConfig {
-            topics: resolved_included,
-            excluded_topics: resolved_excluded,
+            include_topics: resolved_included,
+            exclude_topics: resolved_excluded,
         };
 
         Ok(resolved)
     } else if !topics.is_empty() {
         let result: ResolvedTopicConfig = ResolvedTopicConfig {
-            topics: topics.clone(),
-            excluded_topics: topics_excluded.clone(),
+            include_topics: topics.clone(),
+            exclude_topics: exclude_topics.clone(),
         };
         Ok(result)
     } else {
         return Err(Error::Config(format!(
-            "Either 'topics' or 'topics_config_map' must be specified, but neither was provided"
+            "Either 'topics' or 'topics_config_map' must be specified, but neither have been provided"
         )));
     }
 }
@@ -222,6 +222,15 @@ pub async fn build_backup_config(
 ) -> Result<ResolvedBackupConfig> {
     // Resolve Kafka configuration
     let kafka = build_kafka_config(&backup.spec.kafka_cluster, client, namespace).await?;
+
+    let topics = build_topic_config(
+        &backup.spec.topics,
+        &backup.spec.exclude_topics,
+        &backup.spec.topics_config_map,
+        client,
+        namespace,
+    )
+    .await?;
 
     // Resolve storage configuration
     let storage = build_storage_config(&backup.spec.storage, client, namespace).await?;
@@ -267,8 +276,8 @@ pub async fn build_backup_config(
 
     Ok(ResolvedBackupConfig {
         kafka,
-        topics: backup.spec.topics.clone(),
-        exclude_topics: backup.spec.exclude_topics.clone(),
+        topics: topics.include_topics,
+        exclude_topics: topics.exclude_topics,
         storage,
         compression,
         checkpoint,
