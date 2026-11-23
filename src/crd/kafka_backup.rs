@@ -135,17 +135,18 @@ pub struct KafkaBackupSpec {
 
 /// Topic Kubernetes ConfigMap reference
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TopicConfigMap {
     /// Name of the ConfigMap containing topic definitions
     pub name: String,
 
     /// Key within the ConfigMap containing topic definitions (defaults to "topics")
     #[serde(default = "default_topic_include_config_map_key")]
-    pub key: String,
+    pub topics_key: String,
 
-    /// Key within the ConfigMap containing topic definitions to exclude (defaults to "exclude_topics")
+    /// Key within the ConfigMap containing topic definitions to exclude (defaults to "excluded_topics")
     #[serde(default = "default_topic_exclude_config_map_key")]
-    pub exclude_key: String,
+    pub topics_exclude_key: String,
 }
 
 fn default_topic_include_config_map_key() -> String {
@@ -153,7 +154,7 @@ fn default_topic_include_config_map_key() -> String {
 }
 
 fn default_topic_exclude_config_map_key() -> String {
-    "exclude_topics".to_string()
+    "excluded_topics".to_string()
 }
 
 /// Handling of literal topics that are absent from the source cluster

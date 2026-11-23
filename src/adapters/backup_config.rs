@@ -176,7 +176,7 @@ pub async fn build_topic_config(
         let resolved_included: Vec<String> = config
             .data
             .as_ref()
-            .and_then(|data| data.get(&config_map.key))
+            .and_then(|data| data.get(&config_map.topics_key))
             .map(|v| {
                 v.split(',')
                     .map(|s| s.trim().to_string())
@@ -187,7 +187,7 @@ pub async fn build_topic_config(
         let resolved_excluded: Vec<String> = config
             .data
             .as_ref()
-            .and_then(|data| data.get(&config_map.exclude_key))
+            .and_then(|data| data.get(&config_map.topics_exclude_key))
             .map(|v| {
                 v.split(',')
                     .map(|s| s.trim().to_string())
