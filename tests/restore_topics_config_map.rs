@@ -27,7 +27,7 @@ fn topics_config_map_custom_keys_round_trip_with_camel_case() {
     let spec = restore_spec(json!({
         "name": "restore-topics",
         "topicsKey": "included-topics",
-        "topicMappingKey": "topic-mappings"
+        "topicMappingsKey": "topic-mappings"
     }));
 
     let config_map = spec
@@ -43,7 +43,7 @@ fn topics_config_map_custom_keys_round_trip_with_camel_case() {
         json!({
             "name": "restore-topics",
             "topicsKey": "included-topics",
-            "topicMappingKey": "topic-mappings"
+            "topicMappingsKey": "topic-mappings"
         })
     );
 }

@@ -626,6 +626,75 @@ The mapping report is written to the operator pod's local disk (`status.offsetMa
 restore) and does not survive an operator restart; for PVC-backed restores it is stored next to the
 backup instead.
 
+### Select backup and restore topics from a ConfigMap
+
+`topicsConfigMap` lets a `KafkaBackup` or `KafkaRestore` read topic selections
+from a ConfigMap in the same namespace. ConfigMap values are comma-separated.
+For restores, topic mappings use `source:target` entries.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: topic-selection
+data:
+  backup_topics: |
+    - orders
+    - events
+  excluded_topics: |
+    - events
+  restore_topics: |
+    - orders
+  topic_mappings: |
+    orders:orders-restored
+```
+
+Reference the include and exclude keys from a `KafkaBackup`:
+
+```yaml
+apiVersion: kafka.oso.sh/v1alpha1
+kind: KafkaBackup
+metadata:
+  name: production-backup
+spec:
+  kafkaCluster:
+    bootstrapServers:
+      - kafka:9092
+  topicsConfigMap:
+    name: topic-selection
+    topicsIncludeKey: backup_topics
+    topicsExcludeKey: excluded_topics
+```
+
+`topicsIncludeKey` defaults to `topics`; `topicsExcludeKey` defaults to
+`excluded_topics`. A ConfigMap-backed backup cannot also set `topics` or
+`excludeTopics` inline.
+
+Reference the topic and mapping keys from a `KafkaRestore`:
+
+```yaml
+apiVersion: kafka.oso.sh/v1alpha1
+kind: KafkaRestore
+metadata:
+  name: restore-orders
+spec:
+  backupRef:
+    name: production-backup
+    backupId: "production-backup-20251210-020000"  # Optional: specific backup
+  kafkaCluster:
+    bootstrapServers:
+      - kafka-bootstrap:9092
+  topicsConfigMap:
+    name: topic-selection
+    topicsKey: restore_topics
+    topicMappingsKey: topic_mappings
+```
+
+`topicsKey` defaults to `topics`; `topicMappingsKey` defaults to
+`topic_mappings`. The selected restore topics refer to source topics in the
+backup, and each mapping entry maps a source topic to its target topic. A
+ConfigMap-backed restore cannot also set `topics` or `topicMapping` inline.
+
 ## Helm Values
 
 Key configuration options for the Helm chart:
