@@ -7,6 +7,7 @@ This directory contains a complete local testing environment for validating the 
 - [Minikube](https://minikube.sigs.k8s.io/docs/start/) installed
 - [kubectl](https://kubernetes.io/docs/tasks/tools/) installed
 - [kustomize](https://kubectl.docs.kubernetes.io/installation/kustomize/) (or kubectl with kustomize support)
+- Python 3 installed for the verification scripts
 - Docker or another container runtime
 - Minimum 8GB RAM available for Minikube
 
@@ -110,6 +111,12 @@ minikube/
 │   │   ├── producer.yaml
 │   │   ├── backup-pvc.yaml
 │   │   └── kafka-backup.yaml
+│   ├── topics-config-map/      # CFK ConfigMap-backed backup and restore test
+│   │   ├── kustomization.yaml
+│   │   ├── topics-config-map.yaml
+│   │   ├── orders-topic.yaml
+│   │   ├── orders-producer.yaml
+│   │   └── kafka-restore.yaml
 │   └── strimzi-tls/            # Strimzi mTLS test (split CA/client secrets)
 │       ├── kustomization.yaml
 │       ├── producer.yaml
@@ -120,6 +127,9 @@ minikube/
 │   ├── setup.sh               # CFK test setup
 │   ├── teardown.sh            # CFK test cleanup
 │   ├── verify-backup.sh       # CFK backup verification
+│   ├── setup-topics-config-map.sh
+│   ├── verify-topics-config-map.sh
+│   ├── teardown-topics-config-map.sh
 │   ├── consume-messages.sh    # View topic messages
 │   ├── setup-strimzi-tls.sh   # Strimzi TLS test setup
 │   ├── teardown-strimzi-tls.sh # Strimzi TLS test cleanup
@@ -166,6 +176,30 @@ The `kafka-backup.yaml` creates a backup with:
 - **Checkpointing**: Enabled (30-second intervals)
 - **Rate Limiting**: 2 concurrent partitions
 - **Circuit Breaker**: Enabled (5 failure threshold)
+
+## Topics ConfigMap E2E Test
+
+This CFK-based test verifies ConfigMap-backed topic selection for both backup
+and restore. The backup ConfigMap includes `backup-test-topic` and `orders`,
+then excludes `orders`; the restore reads a separate topic list and maps
+`backup-test-topic` to `restored-topic`.
+
+```bash
+cd minikube
+
+# Set up the CFK test environment and start the ConfigMap-backed backup
+./scripts/setup-topics-config-map.sh
+
+# Verify the backup manifest selection and run/verify the mapped restore
+./scripts/verify-topics-config-map.sh
+
+# Remove the test resources and operator environment
+./scripts/teardown-topics-config-map.sh
+```
+
+The test uses `topicsIncludeKey` and `topicsExcludeKey` on `KafkaBackup`, and
+`topicsKey` and `topicMappingsKey` on `KafkaRestore`. The ConfigMap values are
+comma-separated; restore mappings use `source:target` entries.
 
 ## Troubleshooting
 

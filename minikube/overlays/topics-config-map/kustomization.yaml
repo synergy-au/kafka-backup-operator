@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: confluent
+resources:
+  - ../test
+  - topics-config-map.yaml
+  - orders-topic.yaml
+  - orders-producer.yaml
+patches:
+  - target:
+      group: kafka.oso.sh
+      version: v1alpha1
+      kind: KafkaBackup
+      name: backup-test-topic
+    patch: |-
+      apiVersion: kafka.oso.sh/v1alpha1
+      kind: KafkaBackup
+      metadata:
+        name: backup-test-topic
+      spec:
+        topics: []
+        suspend: true
+        topicsConfigMap:
+          name: topics-config-map-test
+          topicsIncludeKey: backup_topics
+          topicsExcludeKey: excluded_topics

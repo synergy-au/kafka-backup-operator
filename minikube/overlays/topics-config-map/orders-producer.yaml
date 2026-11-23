@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-orders-producer
+  namespace: confluent
+  labels:
+    app: kafka-orders-producer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-orders-producer
+  template:
+    metadata:
+      labels:
+        app: kafka-orders-producer
+    spec:
+      containers:
+        - name: kafka-orders-producer
+          image: confluentinc/cp-kafka:7.5.0
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for Kafka to be ready..."
+              sleep 60
+
+              echo "Starting continuous message production to orders..."
+              count=0
+              while true; do
+                for i in $(seq 1 100); do
+                  count=$((count + 1))
+                  echo "{\"id\": $count, \"message\": \"ConfigMap test message $count\"}"
+                done | kafka-console-producer \
+                  --bootstrap-server kafka.confluent.svc.cluster.local:9071 \
+                  --topic orders
+
+                echo "Produced 100 orders messages (total: $count). Sleeping 10 seconds..."
+                sleep 10
+              done
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      restartPolicy: Always

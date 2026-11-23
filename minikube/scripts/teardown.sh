@@ -4,6 +4,16 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MINIKUBE_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(dirname "$MINIKUBE_DIR")"
+TEST_OVERLAY="${1:-test}"
+
+case "$TEST_OVERLAY" in
+    test|topics-config-map)
+        ;;
+    *)
+        echo "Unsupported test overlay: $TEST_OVERLAY" >&2
+        exit 1
+        ;;
+esac
 
 echo "============================================"
 echo "Tearing down Kafka Backup Operator test env"
@@ -11,7 +21,7 @@ echo "============================================"
 
 echo ""
 echo "Deleting test resources..."
-kubectl delete -k "$MINIKUBE_DIR/overlays/test" --ignore-not-found=true
+kubectl delete -k "$MINIKUBE_DIR/overlays/$TEST_OVERLAY" --ignore-not-found=true
 
 echo ""
 echo "Deleting Kafka Backup Operator..."

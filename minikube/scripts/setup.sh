@@ -4,6 +4,20 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MINIKUBE_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(dirname "$MINIKUBE_DIR")"
+TEST_OVERLAY="${1:-test}"
+
+case "$TEST_OVERLAY" in
+    test)
+        VERIFY_SCRIPT="verify-backup.sh"
+        ;;
+    topics-config-map)
+        VERIFY_SCRIPT="verify-topics-config-map.sh"
+        ;;
+    *)
+        echo "Unsupported test overlay: $TEST_OVERLAY" >&2
+        exit 1
+        ;;
+esac
 
 echo "============================================"
 echo "Kafka Backup Operator - Minikube Test Setup"
@@ -46,7 +60,7 @@ echo ""
 echo "Step 4: Building and loading operator image into minikube..."
 echo "-------------------------------------------------------------"
 # Build the image using minikube's Docker daemon
-eval $(minikube docker-env)
+eval "$(minikube docker-env)"
 docker build -t ghcr.io/osodevops/kafka-backup-operator:latest -f "$REPO_ROOT/Dockerfile" "$REPO_ROOT"
 
 echo ""
@@ -68,7 +82,7 @@ helm upgrade --install kafka-backup-operator "$REPO_ROOT/deploy/helm/kafka-backu
 echo ""
 echo "Step 6: Deploying Confluent Platform (ZK + Kafka)..."
 echo "-----------------------------------------------------"
-kubectl apply -k "$MINIKUBE_DIR/overlays/test"
+kubectl apply -k "$MINIKUBE_DIR/overlays/$TEST_OVERLAY"
 
 echo ""
 echo "Waiting for Zookeeper to be ready..."
@@ -97,4 +111,4 @@ echo "To view operator logs:"
 echo "  kubectl logs -f deployment/kafka-backup-operator -n confluent"
 echo ""
 echo "To verify backup data:"
-echo "  ./scripts/verify-backup.sh"
+echo "  ./scripts/$VERIFY_SCRIPT"
