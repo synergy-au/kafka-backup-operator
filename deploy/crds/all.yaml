@@ -143,6 +143,7 @@ spec:
                 description: |-
                   Topics to leave out, names or globs (* and ?). Applied after `topics`, so
                   `topics: ["*"]` with an exclude list also backs up every topic created later.
+                  Will error if both `exclude_topics` and `topics_config_map` are specified.
                 items:
                   type: string
                 type: array
@@ -648,14 +649,40 @@ spec:
                 description: Suspend backups (useful for maintenance)
                 type: boolean
               topics:
-                description: Topics to backup
+                default: []
+                description: |-
+                  List of topics to backup
+                  Either specify topics here or use `topics_config_map`. Will error if both are specified.
                 items:
                   type: string
                 type: array
+              topicsConfigMap:
+                description: |-
+                  ConfigMap containing topic definitions to include/exclude
+                  The `name` field specifies the ConfigMap name.
+                  The `topics_key` field specifies the key within the ConfigMap containing topic definitions to include.
+                  The `topics_exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
+                nullable: true
+                properties:
+                  name:
+                    description: Name of the ConfigMap containing topic definitions
+                    type: string
+                  topicsExcludeKey:
+                    default: excluded_topics
+                    description: >-
+                      Key within the ConfigMap containing topic definitions to exclude (defaults to
+                      "excluded_topics")
+                    type: string
+                  topicsKey:
+                    default: topics
+                    description: Key within the ConfigMap containing topic definitions (defaults to "topics")
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - kafkaCluster
             - storage
-            - topics
             type: object
           status:
             description: KafkaBackup status
@@ -1482,14 +1509,42 @@ spec:
                 additionalProperties:
                   type: string
                 default: {}
-                description: Topic remapping (source -> target)
+                description: |-
+                  Topic remapping (source -> target)
+                  Will error if both `topic_mapping` and `topics_config_map` are specified.
                 type: object
               topics:
                 default: []
-                description: Topics to restore (empty = all topics from backup)
+                description: |-
+                  Topics to restore (empty = all topics from backup)
+                  Will error if both `kafka_cluster` and `topics_config_map` are specified.
                 items:
                   type: string
                 type: array
+              topicsConfigMap:
+                description: |-
+                  ConfigMap containing topic definitions to include/exclude
+                  The `name` field specifies the ConfigMap name.
+                  The `topics_key` field specifies the key within the ConfigMap containing topic definitions to include.
+                  The `topic_mapping_key` field specifies the key within the ConfigMap containing topic mapping definitions.
+                nullable: true
+                properties:
+                  name:
+                    description: Name of the ConfigMap containing topic definitions
+                    type: string
+                  topicMappingKey:
+                    default: topic_mappings
+                    description: >-
+                      Key within the ConfigMap containing topic definitions to exclude (defaults to
+                      "topic_mappings")
+                    type: string
+                  topicsKey:
+                    default: topics
+                    description: Key within the ConfigMap containing topic definitions (defaults to "topics")
+                    type: string
+                required:
+                - name
+                type: object
             required:
             - backupRef
             - kafkaCluster
