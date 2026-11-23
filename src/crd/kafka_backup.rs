@@ -28,7 +28,7 @@ pub struct KafkaBackupSpec {
     pub kafka_cluster: KafkaClusterSpec,
 
     /// Topics to backup
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub topics: Vec<String>,
 
     /// Topics to leave out, names or globs (* and ?). Applied after `topics`, so

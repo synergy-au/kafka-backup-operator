@@ -163,9 +163,9 @@ pub async fn build_topic_config(
         topics_config_map = ?topics_config_map,
         "Building topic config from configuration",
     );
-    if !topics_config_map.is_none() && !topics.is_empty() {
+    if !topics_config_map.is_none() && (!topics.is_empty() || !exclude_topics.is_empty()) {
         return Err(Error::Config(format!(
-            "Cannot specify both 'topics' and 'topics_config_map'"
+            "Cannot specify both 'topics'/'exclude_topics' and 'topics_config_map' simultaneously"
         )));
     }
     if let Some(config_map) = topics_config_map {
