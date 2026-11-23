@@ -28,12 +28,20 @@ pub struct KafkaBackupSpec {
     pub kafka_cluster: KafkaClusterSpec,
 
     /// Topics to backup
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub topics: Vec<String>,
 
     /// Topics to leave out, names or globs (* and ?). Applied after `topics`, so
     /// `topics: ["*"]` with an exclude list also backs up every topic created later.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclude_topics: Vec<String>,
+
+    /// ConfigMap containing topic definitions to include/exclude
+    /// The `name` field specifies the ConfigMap name.
+    /// The `key` field specifies the key within the ConfigMap containing topic definitions to include.
+    /// The `exclude_key` field specifies the key within the ConfigMap containing topic definitions to exclude.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub topics_config_map: Option<TopicConfigMap>,
 
     /// What to do when a literal (non-glob) entry in `topics` does not exist in
     /// the cluster: `fail` (default) fails the backup; `warn` skips it, records
@@ -123,6 +131,29 @@ pub struct KafkaBackupSpec {
     /// Metrics configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<MetricsSpec>,
+}
+
+/// Topic Kubernetes ConfigMap reference
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
+pub struct TopicConfigMap {
+    /// Name of the ConfigMap containing topic definitions
+    pub name: String,
+
+    /// Key within the ConfigMap containing topic definitions (defaults to "topics")
+    #[serde(default = "default_topic_include_config_map_key")]
+    pub key: String,
+
+    /// Key within the ConfigMap containing topic definitions to exclude (defaults to "exclude_topics")
+    #[serde(default = "default_topic_exclude_config_map_key")]
+    pub exclude_key: String,
+}
+
+fn default_topic_include_config_map_key() -> String {
+    "topics".to_string()
+}
+
+fn default_topic_exclude_config_map_key() -> String {
+    "exclude_topics".to_string()
 }
 
 /// Handling of literal topics that are absent from the source cluster

@@ -2,13 +2,15 @@
 //!
 //! Converts KafkaBackup CRD spec to kafka-backup-core configuration.
 
-use kube::Client;
+use k8s_openapi::api::core::v1::ConfigMap;
+use kube::{api::Api, Client};
+use tracing::debug;
 
 use crate::crd::{
     CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaClusterSpec, KafkaConnectionSpec,
-    MetricsSpec, OnMissingTopicPolicy, RateLimitingSpec,
+    MetricsSpec, OnMissingTopicPolicy, RateLimitingSpec, TopicConfigMap,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 use super::secrets::{get_sasl_credentials, get_tls_credentials_split, TlsCredentials};
 use super::storage_config::{build_storage_config, ResolvedStorage};
@@ -139,6 +141,77 @@ pub struct ResolvedBackupOptionsConfig {
     pub empty_fetch_retry_secs: u64,
     pub consumer_group_snapshot: bool,
     pub on_missing_topic: OnMissingTopicPolicy,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedTopicConfig {
+    pub topics: Vec<String>,
+    pub excluded_topics: Vec<String>,
+}
+
+/// Build fully resolved topic configuration from CRD  and ConfigMap
+pub async fn build_topic_config(
+    topics: &Vec<String>,
+    topics_excluded: &Vec<String>,
+    topics_config_map: &Option<TopicConfigMap>,
+    client: &Client,
+    namespace: &str,
+) -> Result<ResolvedTopicConfig> {
+    debug!(
+        topics = ?topics,
+        topics_excluded = ?topics_excluded,
+        topics_config_map = ?topics_config_map,
+        "Building topic config from configuration",
+    );
+    if !topics_config_map.is_none() && !topics.is_empty() {
+        return Err(Error::Config(format!(
+            "Cannot specify both 'topics' and 'topics_config_map'"
+        )));
+    }
+    if let Some(config_map) = topics_config_map {
+        let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
+        let config: ConfigMap = config_maps.get(&config_map.name).await?;
+
+        // Resolve topic list from ConfigMap data using the specified key
+        let resolved_included: Vec<String> = config
+            .data
+            .as_ref()
+            .and_then(|data| data.get(&config_map.key))
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let resolved_excluded: Vec<String> = config
+            .data
+            .as_ref()
+            .and_then(|data| data.get(&config_map.exclude_key))
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+
+        let resolved = ResolvedTopicConfig {
+            topics: resolved_included,
+            excluded_topics: resolved_excluded,
+        };
+
+        Ok(resolved)
+    } else if !topics.is_empty() {
+        let result: ResolvedTopicConfig = ResolvedTopicConfig {
+            topics: topics.clone(),
+            excluded_topics: topics_excluded.clone(),
+        };
+        Ok(result)
+    } else {
+        return Err(Error::Config(format!(
+            "Either 'topics' or 'topics_config_map' must be specified, but neither was provided"
+        )));
+    }
 }
 
 /// Build fully resolved backup configuration from CRD
