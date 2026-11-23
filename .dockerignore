@@ -1,0 +1,13 @@
+# Unneeded image build directories
+manifests/
+minikube/
+scripts/
+target/
+deploy/
+docs/
+
+# Files not required for Docker build
+Dockerfile
+*.md
+*.sh
+*.py
