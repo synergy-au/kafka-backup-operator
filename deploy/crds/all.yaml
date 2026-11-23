@@ -673,7 +673,7 @@ spec:
                       Key within the ConfigMap containing topic definitions to exclude (defaults to
                       "excluded_topics")
                     type: string
-                  topicsKey:
+                  topicsIncludeKey:
                     default: topics
                     description: Key within the ConfigMap containing topic definitions (defaults to "topics")
                     type: string
@@ -1532,7 +1532,7 @@ spec:
                   name:
                     description: Name of the ConfigMap containing topic definitions
                     type: string
-                  topicMappingKey:
+                  topicMappingsKey:
                     default: topic_mappings
                     description: >-
                       Key within the ConfigMap containing topic definitions to exclude (defaults to

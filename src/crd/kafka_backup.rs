@@ -144,7 +144,7 @@ pub struct TopicConfigMap {
 
     /// Key within the ConfigMap containing topic definitions (defaults to "topics")
     #[serde(default = "default_topic_include_config_map_key")]
-    pub topics_key: String,
+    pub topics_include_key: String,
 
     /// Key within the ConfigMap containing topic definitions to exclude (defaults to "excluded_topics")
     #[serde(default = "default_topic_exclude_config_map_key")]

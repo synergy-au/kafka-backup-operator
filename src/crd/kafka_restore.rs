@@ -150,15 +150,15 @@ pub struct TopicRestoreConfigMap {
     pub topics_key: String,
 
     /// Key within the ConfigMap containing topic definitions to exclude (defaults to "topic_mappings")
-    #[serde(default = "default_topic_mapping_config_map_key")]
-    pub topic_mapping_key: String,
+    #[serde(default = "default_topic_mappings_config_map_key")]
+    pub topic_mappings_key: String,
 }
 
 fn default_topic_restore_config_map_key() -> String {
     "topics".to_string()
 }
 
-fn default_topic_mapping_config_map_key() -> String {
+fn default_topic_mappings_config_map_key() -> String {
     "topic_mappings".to_string()
 }
 

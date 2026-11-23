@@ -138,7 +138,10 @@ pub async fn build_topic_restore_config(
         "Building topic config from configuration",
     );
     if !topics_config_map.is_none() && (!topics.is_empty() || !topic_mappings.is_empty()) {
-        return Err(Error::Config("Cannot specify 'topics'/'topic_mappings' and 'topics_config_map' simultaneously".to_string()));
+        return Err(Error::Config(
+            "Cannot specify 'topics'/'topic_mappings' and 'topics_config_map' simultaneously"
+                .to_string(),
+        ));
     }
     if let Some(config_map) = topics_config_map {
         let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
@@ -159,7 +162,7 @@ pub async fn build_topic_restore_config(
         let resolved_mappings: std::collections::HashMap<String, String> = config
             .data
             .as_ref()
-            .and_then(|data| data.get(&config_map.topic_mapping_key))
+            .and_then(|data| data.get(&config_map.topic_mappings_key))
             .map(|v| {
                 v.split(',')
                     .filter_map(|mapping| {
