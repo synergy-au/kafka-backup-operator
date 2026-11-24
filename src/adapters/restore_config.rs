@@ -144,7 +144,8 @@ pub async fn build_topic_restore_config(
         ));
     }
     if let Some(config_map) = topics_config_map {
-        let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), namespace);
+        let ns: &str = config_map.namespace.as_deref().unwrap_or(namespace);
+        let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), ns);
         let config: ConfigMap = config_maps.get(&config_map.name).await?;
 
         // Resolve topic list from ConfigMap data using the specified key

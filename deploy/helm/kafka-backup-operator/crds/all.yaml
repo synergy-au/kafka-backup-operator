@@ -667,6 +667,12 @@ spec:
                   name:
                     description: Name of the ConfigMap containing topic definitions
                     type: string
+                  namespace:
+                    description: >-
+                      Namespace of the ConfigMap containing topic definitions (defaults to the
+                      current namespace)
+                    nullable: true
+                    type: string
                   topicsExcludeKey:
                     default: excluded_topics
                     description: >-
@@ -1529,6 +1535,12 @@ spec:
                 properties:
                   name:
                     description: Name of the ConfigMap containing topic definitions
+                    type: string
+                  namespace:
+                    description: >-
+                      Namespace of the ConfigMap containing topic definitions (defaults to the
+                      current namespace)
+                    nullable: true
                     type: string
                   topicMappingsKey:
                     default: topic_mappings

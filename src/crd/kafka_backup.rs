@@ -142,6 +142,9 @@ pub struct TopicConfigMap {
     /// Name of the ConfigMap containing topic definitions
     pub name: String,
 
+    /// Namespace of the ConfigMap containing topic definitions (defaults to the current namespace)
+    pub namespace: Option<String>,
+
     /// Key within the ConfigMap containing topic definitions (defaults to "topics")
     #[serde(default = "default_topic_include_config_map_key")]
     pub topics_include_key: String,
