@@ -5,7 +5,7 @@
 use k8s_openapi::api::core::v1::ConfigMap;
 use kube::{api::Api, Client};
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::crd::{
     BackupRef, HeaderPreflightPolicy, KafkaRestore, OffsetResetSpec, PitrSpec, RollbackSpec,
@@ -18,6 +18,7 @@ use super::backup_config::{
     ResolvedRateLimitingConfig,
 };
 use super::storage_config::{build_storage_config, ResolvedStorage};
+use super::topic_config::config_map_list;
 
 /// Fully resolved restore configuration
 #[derive(Debug, Clone)]
@@ -148,31 +149,34 @@ pub async fn build_topic_restore_config(
         let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), ns);
         let config: ConfigMap = config_maps.get(&config_map.name).await?;
 
-        // Resolve topic list from ConfigMap data using the specified key
-        let resolved_included: Vec<String> = config
-            .data
-            .as_ref()
-            .and_then(|data| data.get(&config_map.topics_key))
-            .map(|v| {
-                v.split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
-
-        let resolved_mappings: std::collections::HashMap<String, String> = config
-            .data
-            .as_ref()
-            .and_then(|data| data.get(&config_map.topic_mappings_key))
-            .map(|v| {
-                v.split(',')
-                    .filter_map(|mapping| {
-                        let (source, target) = mapping.split_once(':')?;
-                        Some((source.trim().to_string(), target.trim().to_string()))
-                    })
-                    .collect::<std::collections::HashMap<String, String>>()
-            })
-            .unwrap_or_default();
+        let resolved_included =
+            config_map_list(&config, ns, &config_map.name, &config_map.topics_key)?;
+        let mapping_entries =
+            config_map_list(&config, ns, &config_map.name, &config_map.topic_mappings_key)?;
+        let mut resolved_mappings = HashMap::new();
+        for (index, mapping) in mapping_entries.iter().enumerate() {
+            let Some((source, target)) = mapping.split_once(':') else {
+                warn!(
+                    namespace = ns,
+                    config_map = %config_map.name,
+                    key = %config_map.topic_mappings_key,
+                    entry = index + 1,
+                    "Skipping invalid topic mapping without ':' separator"
+                );
+                continue;
+            };
+            let (source, target) = (source.trim(), target.trim());
+            if source.is_empty() || target.is_empty() {
+                warn!(
+                    namespace = ns,
+                    config_map = %config_map.name,
+                    key = %config_map.topic_mappings_key,
+                    entry = index + 1,
+                    "Retaining invalid topic mapping with empty source or target for compatibility"
+                );
+            }
+            resolved_mappings.insert(source.to_owned(), target.to_owned());
+        }
 
         let resolved = ResolvedTopicRestoreConfig {
             topics: resolved_included,

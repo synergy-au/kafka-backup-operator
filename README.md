@@ -657,8 +657,47 @@ backup instead.
 ### Select backup and restore topics from a ConfigMap
 
 `topicsConfigMap` lets a `KafkaBackup` or `KafkaRestore` read topic selections
-from a ConfigMap in the same namespace. ConfigMap values are comma-separated.
-For restores, topic mappings use `source:target` entries.
+from a ConfigMap in the same namespace (or the configured `namespace`).
+Each selected ConfigMap value is a string containing comma-separated entries,
+newline-separated entries, or a YAML string list (block or flow style). For
+example, these values select the same topics:
+
+```yaml
+data:
+  comma_topics: "orders,events"
+  newline_topics: |
+    orders
+    events
+  yaml_topics: |
+    - orders
+    - events
+  flow_topics: "[orders, events]"
+```
+
+Entries are trimmed and blank strings are ignored. Plain values may mix commas
+and newlines. Topic order and duplicates are preserved; missing keys resolve to
+empty lists. Malformed YAML lists and non-string YAML items cause a configuration
+error rather than falling back to plain text. Quote YAML items containing
+wildcards (for example, `- "*"`) or values YAML would interpret as numbers,
+booleans, or null.
+
+Restore topic mappings accept the same list formats, with each string using a
+`source:target` binding, such as `"orders:orders-restored,events:events-restored"`
+or a block list:
+
+```yaml
+data:
+  topic_mappings: |
+    - orders:orders-restored
+    - events:events-restored
+```
+
+`- orders:orders-restored` is a string and is accepted;
+`- orders: orders-restored` is a YAML object and is rejected. To include a space
+after the colon, quote the entire binding: `- "orders: orders-restored"`.
+Mapping entries without a colon are skipped with a warning. Empty sources or
+targets are retained with a warning for compatibility; duplicate sources keep
+the last binding. Inline topic arrays and mappings are unchanged.
 
 ```yaml
 apiVersion: v1

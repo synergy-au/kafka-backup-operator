@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 
 use super::secrets::{get_sasl_credentials, get_tls_credentials_split, TlsCredentials};
 use super::storage_config::{build_storage_config, ResolvedStorage};
+use super::topic_config::config_map_list;
 
 /// Fully resolved backup configuration
 #[derive(Debug, Clone)]
@@ -174,28 +175,10 @@ pub async fn build_topic_config(
         let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), ns);
         let config: ConfigMap = config_maps.get(&config_map.name).await?;
 
-        // Resolve topic list from ConfigMap data using the specified key
-        let resolved_included: Vec<String> = config
-            .data
-            .as_ref()
-            .and_then(|data| data.get(&config_map.topics_include_key))
-            .map(|v| {
-                v.split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
-
-        let resolved_excluded: Vec<String> = config
-            .data
-            .as_ref()
-            .and_then(|data| data.get(&config_map.topics_exclude_key))
-            .map(|v| {
-                v.split(',')
-                    .map(|s| s.trim().to_string())
-                    .collect::<Vec<String>>()
-            })
-            .unwrap_or_default();
+        let resolved_included =
+            config_map_list(&config, ns, &config_map.name, &config_map.topics_include_key)?;
+        let resolved_excluded =
+            config_map_list(&config, ns, &config_map.name, &config_map.topics_exclude_key)?;
 
         let resolved = ResolvedTopicConfig {
             include_topics: resolved_included,

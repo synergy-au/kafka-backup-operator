@@ -7,6 +7,7 @@ mod restore_config;
 mod secrets;
 mod storage_config;
 mod tls_files;
+mod topic_config;
 mod validation_config;
 
 pub use backup_config::*;
