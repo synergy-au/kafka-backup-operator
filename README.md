@@ -93,6 +93,34 @@ The operator provides five CRDs for managing Kafka backup and restore operations
 
 ## Upgrade Notes
 
+### 1.9.2
+
+Refreshes the Kubernetes client, schema generator and runtime dependencies, and
+uses `serde-saphyr` to generate CRD YAML. Core `0.30.3` patches the bundled
+SQLite and ZIP dependencies; existing checkpoints and backup archives remain
+compatible. **Apply the regenerated CRDs before upgrading the
+operator**; Helm does not update existing CRDs:
+
+```bash
+kubectl apply --server-side --field-manager=kafka-backup-operator-crds \
+  --force-conflicts -f deploy/crds/all.yaml
+```
+
+This explicitly transfers CRD schema ownership from Helm to the named field
+manager. Keep using that manager for subsequent CRD upgrades.
+
+The schema generator now emits explicit nullability and numeric bounds. Existing
+valid configurations retain their defaults, GCS authentication validation and
+structured validation diagnostics. Build the container with its pinned Rust
+1.100 base image and committed Cargo lockfile. See
+[the local upgrade test](minikube/README.md#release-upgrade-and-rollback-test)
+for the backwards compatibility and rollback checks.
+
+Future-year cron schedules now start at their first matching UTC date. For
+example, `0 0 0 * * * 2027` becomes due on January 1, 2027, even when created in
+November 2026. Earlier versions could skip initial matching months and days.
+The six/seven-field syntax is unchanged.
+
 ### 1.9.1
 
 Uses core `0.30.2` to expose per-topic and per-partition message count diagnostics
