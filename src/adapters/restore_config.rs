@@ -151,8 +151,12 @@ pub async fn build_topic_restore_config(
 
         let resolved_included =
             config_map_list(&config, ns, &config_map.name, &config_map.topics_key)?;
-        let mapping_entries =
-            config_map_list(&config, ns, &config_map.name, &config_map.topic_mappings_key)?;
+        let mapping_entries = config_map_list(
+            &config,
+            ns,
+            &config_map.name,
+            &config_map.topic_mappings_key,
+        )?;
         let mut resolved_mappings = HashMap::new();
         for (index, mapping) in mapping_entries.iter().enumerate() {
             let Some((source, target)) = mapping.split_once(':') else {
@@ -216,6 +220,8 @@ pub async fn build_restore_config(
         namespace,
     )
     .await?;
+
+    debug!(topics = ?topics, "Resolved topic configuration successfully");
 
     // Build PITR config
     let pitr = restore.spec.pitr.as_ref().map(build_pitr_config);

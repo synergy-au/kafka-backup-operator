@@ -175,10 +175,18 @@ pub async fn build_topic_config(
         let config_maps: Api<ConfigMap> = Api::namespaced(client.clone(), ns);
         let config: ConfigMap = config_maps.get(&config_map.name).await?;
 
-        let resolved_included =
-            config_map_list(&config, ns, &config_map.name, &config_map.topics_include_key)?;
-        let resolved_excluded =
-            config_map_list(&config, ns, &config_map.name, &config_map.topics_exclude_key)?;
+        let resolved_included = config_map_list(
+            &config,
+            ns,
+            &config_map.name,
+            &config_map.topics_include_key,
+        )?;
+        let resolved_excluded = config_map_list(
+            &config,
+            ns,
+            &config_map.name,
+            &config_map.topics_exclude_key,
+        )?;
 
         let resolved = ResolvedTopicConfig {
             include_topics: resolved_included,
@@ -214,6 +222,8 @@ pub async fn build_backup_config(
         namespace,
     )
     .await?;
+
+    debug!(topics = ?topics, "Resolved topic configuration successfully");
 
     // Resolve storage configuration
     let storage = build_storage_config(&backup.spec.storage, client, namespace).await?;
