@@ -193,6 +193,13 @@ pub async fn build_topic_config(
             exclude_topics: resolved_excluded,
         };
 
+        if resolved.include_topics.is_empty() && resolved.exclude_topics.is_empty() {
+            return Err(Error::Config(
+                "The 'topics_config_map' must specify at least one included or excluded topic. None were found."
+                    .to_string(),
+            ));
+        }
+
         Ok(resolved)
     } else if !topics.is_empty() {
         let result: ResolvedTopicConfig = ResolvedTopicConfig {

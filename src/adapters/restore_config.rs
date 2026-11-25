@@ -187,6 +187,13 @@ pub async fn build_topic_restore_config(
             topic_mappings: resolved_mappings,
         };
 
+        if resolved.topics.is_empty() && resolved.topic_mappings.is_empty() {
+            return Err(Error::Config(
+                "The 'topics_config_map' must specify at least one topic or topic mapping. None were found."
+                    .to_string(),
+            ));
+        }
+
         Ok(resolved)
     } else if !topics.is_empty() {
         let result: ResolvedTopicRestoreConfig = ResolvedTopicRestoreConfig {
