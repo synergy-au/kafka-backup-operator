@@ -7,6 +7,7 @@ use kafka_backup_operator::reconcilers::restore;
 fn restore_spec() -> KafkaRestoreSpec {
     KafkaRestoreSpec {
         schema_registry: None,
+        oauth: None,
         backup_ref: BackupRef {
             name: "backup-issue48".to_string(),
             namespace: None,

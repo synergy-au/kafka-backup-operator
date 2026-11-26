@@ -6,8 +6,8 @@ use kafka_backup_core::schema_registry::SchemaRegistryConfig;
 use kube::Client;
 
 use crate::crd::{
-    CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaClusterSpec, KafkaConnectionSpec,
-    MetricsSpec, OnMissingTopicPolicy, RateLimitingSpec,
+    CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaBackupSpec, KafkaClusterSpec,
+    KafkaConnectionSpec, MetricsSpec, OnMissingTopicPolicy, RateLimitingSpec,
 };
 use crate::error::{Error, Result};
 
@@ -144,6 +144,36 @@ pub struct ResolvedBackupOptionsConfig {
     pub on_missing_topic: OnMissingTopicPolicy,
 }
 
+pub(crate) async fn resolve_backup_registry(
+    spec: &KafkaBackupSpec,
+    namespace: &str,
+) -> Result<Option<ResolvedRegistryConfig>> {
+    let Some(section) = spec.schema_registry.as_ref().filter(|s| s.enabled) else {
+        return Ok(None);
+    };
+    let mut registry = SchemaRegistryConfig::new(&section.url);
+    registry.tls = section.tls.clone();
+    registry.connection = section.connection.clone();
+    registry.backup = section.backup_options.clone();
+    if registry
+        .backup_options()
+        .snapshot_interval_or_default()
+        .is_zero()
+    {
+        return Err(Error::config(
+            "Schema Registry snapshot_interval must be greater than zero",
+        ));
+    }
+    resolve_registry(
+        registry,
+        section.auth.as_ref(),
+        spec.oauth.as_ref(),
+        namespace,
+    )
+    .await
+    .map(Some)
+}
+
 /// Build fully resolved backup configuration from CRD
 pub async fn build_backup_config(
     backup: &KafkaBackup,
@@ -152,25 +182,8 @@ pub async fn build_backup_config(
 ) -> Result<ResolvedBackupConfig> {
     // Resolve Kafka configuration
     let kafka = build_kafka_config(&backup.spec.kafka_cluster, client, namespace).await?;
-    let schema_registry =
-        if let Some(spec) = backup.spec.schema_registry.as_ref().filter(|s| s.enabled) {
-            let mut registry = SchemaRegistryConfig::new(&spec.url);
-            registry.tls = spec.tls.clone();
-            registry.connection = spec.connection.clone();
-            registry.backup = spec.backup_options.clone();
-            if registry
-                .backup_options()
-                .snapshot_interval_or_default()
-                .is_zero()
-            {
-                return Err(Error::config(
-                    "Schema Registry snapshot_interval must be greater than zero",
-                ));
-            }
-            Some(resolve_registry(registry, spec.auth.as_ref(), namespace).await?)
-        } else {
-            None
-        };
+
+    let schema_registry = resolve_backup_registry(&backup.spec, namespace).await?;
 
     // Resolve storage configuration
     let storage = build_storage_config(&backup.spec.storage, client, namespace).await?;

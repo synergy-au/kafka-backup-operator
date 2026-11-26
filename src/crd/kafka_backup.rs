@@ -2,13 +2,13 @@
 
 use chrono::{DateTime, Utc};
 use kafka_backup_core::schema_registry::{
-    SchemaBackupOptions, SchemaConnectionConfig, SchemaRegistryTls,
+    SchemaBackupOptions, SchemaConnectionConfig, SchemaRegistryAuth, SchemaRegistryTls,
 };
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{registry_object, RegistryAuthSpec};
+use crate::adapters::{registry_object, OauthSpec};
 
 /// KafkaBackup resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -35,6 +35,10 @@ pub struct KafkaBackupSpec {
     /// Schema registry connection configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_registry: Option<SchemaRegistryBackupConfig>,
+
+    /// Named OAuth providers for use in auth configurations
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OauthSpec>,
 
     /// Topics to backup
     pub topics: Vec<String>,
@@ -331,7 +335,7 @@ pub struct SchemaRegistryBackupConfig {
     /// How to authenticate. Default: no authentication.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "registry_object")]
-    pub auth: Option<RegistryAuthSpec>,
+    pub auth: Option<SchemaRegistryAuth>,
 
     /// Server certificate verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -41,6 +41,7 @@ fn restore_with_storage_ref() -> KafkaRestore {
         },
         spec: KafkaRestoreSpec {
             schema_registry: None,
+            oauth: None,
             backup_ref: BackupRef {
                 name: String::new(),
                 namespace: None,

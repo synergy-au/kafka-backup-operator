@@ -110,7 +110,25 @@ fn generated_crd_schemas_avoid_unsupported_kubernetes_keywords() {
             assert_eq!(schema["type"], "object", "{kind}.{field}");
             assert_eq!(schema["x-kubernetes-preserve-unknown-fields"], true);
         }
-        assert!(spec.get("oauth").is_none(), "{kind} exposes spec.oauth");
+        let oauth = &spec["oauth"]["properties"];
+        let cache = &oauth["cache"];
+        assert_eq!(cache["type"], "object", "{kind}.oauth.cache");
+        assert_eq!(cache["x-kubernetes-preserve-unknown-fields"], true);
+        let provider = &oauth["providers"]["additionalProperties"];
+        assert_eq!(provider["type"], "object", "{kind}.oauth.providers");
+        let required = provider["required"]
+            .as_array()
+            .expect("provider required fields");
+        for field in ["clientIdFilePath", "clientSecretFilePath"] {
+            assert!(required.contains(&json!(field)), "{kind}: missing {field}");
+            assert_eq!(
+                provider["properties"][field]["type"], "string",
+                "{kind}.{field}"
+            );
+        }
+        let client_auth = &provider["properties"]["clientAuth"];
+        assert_eq!(client_auth["type"], "string", "{kind}.clientAuth");
+        assert_eq!(client_auth["enum"], json!(["basic", "post"]));
         let registry = &spec["schemaRegistry"]["properties"];
         for field in ["oauth", "providers", "cache"] {
             assert!(

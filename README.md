@@ -424,15 +424,15 @@ The operator restores schemas before Kafka records and stops if the registry
 restore fails. Either `spec.dryRun` or an enabled registry's
 `restoreOptions.dry_run` makes the whole restore validation-only; it does not
 preview or write to either service. Omitting `schemaRegistry` or setting
-`enabled: false` leaves the registry out of the operation. Nested settings use
+`enabled: false` leaves the registry out of the operation. Registry options use
 the core library's snake_case keys. Continuous backups take periodic snapshots
 and a final snapshot; one-shot backups take a single snapshot. With
 `fail_on_partial: false` (default), registry snapshot failures are logged and
 do not fail an otherwise successful Kafka backup.
 
-For OAuth, configure the provider binding, named providers, and optional cache
-settings only inside `schemaRegistry.auth` on either resource. This example
-uses a Secret volume mounted into the operator pod:
+For OAuth, select a named provider in `spec.schemaRegistry.auth` and define it
+under `spec.oauth.providers` on either resource. This example uses a Secret
+volume mounted into the operator pod for both OIDC client credentials:
 
 ```yaml
 schemaRegistry:
@@ -440,27 +440,28 @@ schemaRegistry:
   auth:
     type: oauth
     provider: registry-oidc
-    providers:
-      registry-oidc:
-        type: oidc_client_credentials
-        token_endpoint_url: https://identity.example.com/oauth2/token
-        client_id: kafka-backup
-        client_secret_file: /etc/kafka-backup-operator/registry/data/oidc-client-secret
-        scope: schema-registry
-    cache:
-      refresh_before_expiry: 1m
+oauth:
+  providers:
+    registry-oidc:
+      tokenEndpointUrl: https://identity.example.com/oauth2/token
+      clientIdFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-id
+      clientSecretFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-secret
+      scope: schema-registry
+  cache:
+    refresh_before_expiry: 1m
 ```
 
-`provider` selects one entry in `auth.providers`; only that provider is resolved.
-Optional `target_sr_cluster` and `identity_pool_id` also belong inside `auth`.
+Only the selected provider is resolved. Set either `tokenEndpointUrl` or
+`issuer`; `clientAuth` defaults to `basic` and also accepts `post`. Optional
+Confluent fields `target_sr_cluster` and `identity_pool_id` stay in `auth`.
 
 Replace `data` with the namespace of the backup or restore. Use the chart's
 `extraVolumes` and `extraVolumeMounts` to mount the credential directory
-read-only into the operator pod. Explicit OAuth file paths, `tls.ca_cert`, and
-the CA and keypair paths in `auth: {type: mtls, ...}` must point to files under
-`/etc/kafka-backup-operator/registry/<resource-namespace>/`. Other supported OAuth
-provider types are `azure_managed_identity`, `azure_workload_identity`, and
-`file`. Registry OAuth is separate from authentication to Kafka brokers.
+read-only into the operator pod. OAuth credential paths and optional `caCert`,
+`tls.ca_cert`, and the CA and keypair paths in `auth: {type: mtls, ...}` must
+point to files under `/etc/kafka-backup-operator/registry/<resource-namespace>/`.
+This configuration provides OIDC client credentials for the registry, not
+authentication to Kafka brokers.
 
 Grant write access to these resources only to principals trusted to use the
 mounted credentials and configure their destinations. Restrict operator egress

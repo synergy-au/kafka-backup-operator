@@ -324,6 +324,72 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
+              oauth:
+                description: Named OAuth providers for use in auth configurations
+                nullable: true
+                properties:
+                  cache:
+                    description: Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      properties:
+                        allowInsecureHttp:
+                          default: false
+                          description: |-
+                            Allow `http://` to a non-loopback host. Client secrets then travel in
+                            clear text; for isolated test networks only.
+                          type: boolean
+                        audience:
+                          description: Sent as the `audience` parameter (Okta, Auth0). Entra uses `scope`.
+                          nullable: true
+                          type: string
+                        caCert:
+                          description: Extra CA certificate (PEM) for a private identity provider.
+                          nullable: true
+                          type: string
+                        clientAuth:
+                          default: basic
+                          description: "`basic` (default) or `post` client authentication."
+                          enum:
+                          - basic
+                          - post
+                          type: string
+                        clientIdFilePath:
+                          description: Path to the file containing the client ID.
+                          type: string
+                        clientSecretFilePath:
+                          description: Path to the file containing the client secret.
+                          type: string
+                        extraParams:
+                          additionalProperties:
+                            type: string
+                          default: {}
+                          description: Extra form parameters for the token request.
+                          type: object
+                        issuer:
+                          description: >-
+                            OIDC issuer; the token endpoint is discovered from
+                            `{issuer}/.well-known/openid-configuration`.
+                          nullable: true
+                          type: string
+                        scope:
+                          description: OAuth scope to request. Optional.
+                          nullable: true
+                          type: string
+                        tokenEndpointUrl:
+                          description: The token endpoint. Set exactly one of `tokenEndpointUrl` and `issuer`.
+                          nullable: true
+                          type: string
+                      required:
+                      - clientIdFilePath
+                      - clientSecretFilePath
+                      type: object
+                    default: {}
+                    description: Named OIDC providers selected by the Schema Registry auth block.
+                    type: object
+                type: object
               onMissingTopic:
                 default: fail
                 description: |-
@@ -1337,6 +1403,72 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                type: object
+              oauth:
+                description: Named OAuth providers for use in auth configurations
+                nullable: true
+                properties:
+                  cache:
+                    description: Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      properties:
+                        allowInsecureHttp:
+                          default: false
+                          description: |-
+                            Allow `http://` to a non-loopback host. Client secrets then travel in
+                            clear text; for isolated test networks only.
+                          type: boolean
+                        audience:
+                          description: Sent as the `audience` parameter (Okta, Auth0). Entra uses `scope`.
+                          nullable: true
+                          type: string
+                        caCert:
+                          description: Extra CA certificate (PEM) for a private identity provider.
+                          nullable: true
+                          type: string
+                        clientAuth:
+                          default: basic
+                          description: "`basic` (default) or `post` client authentication."
+                          enum:
+                          - basic
+                          - post
+                          type: string
+                        clientIdFilePath:
+                          description: Path to the file containing the client ID.
+                          type: string
+                        clientSecretFilePath:
+                          description: Path to the file containing the client secret.
+                          type: string
+                        extraParams:
+                          additionalProperties:
+                            type: string
+                          default: {}
+                          description: Extra form parameters for the token request.
+                          type: object
+                        issuer:
+                          description: >-
+                            OIDC issuer; the token endpoint is discovered from
+                            `{issuer}/.well-known/openid-configuration`.
+                          nullable: true
+                          type: string
+                        scope:
+                          description: OAuth scope to request. Optional.
+                          nullable: true
+                          type: string
+                        tokenEndpointUrl:
+                          description: The token endpoint. Set exactly one of `tokenEndpointUrl` and `issuer`.
+                          nullable: true
+                          type: string
+                      required:
+                      - clientIdFilePath
+                      - clientSecretFilePath
+                      type: object
+                    default: {}
+                    description: Named OIDC providers selected by the Schema Registry auth block.
+                    type: object
                 type: object
               offsetReset:
                 description: Consumer offset reset configuration

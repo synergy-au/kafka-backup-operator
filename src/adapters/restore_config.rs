@@ -140,9 +140,14 @@ pub(crate) async fn resolve_restore_registry(
     registry.tls = section.tls.clone();
     registry.connection = section.connection.clone();
     registry.restore = section.restore_options.clone();
-    resolve_registry(registry, section.auth.as_ref(), namespace)
-        .await
-        .map(Some)
+    resolve_registry(
+        registry,
+        section.auth.as_ref(),
+        spec.oauth.as_ref(),
+        namespace,
+    )
+    .await
+    .map(Some)
 }
 
 /// Build fully resolved restore configuration from CRD
