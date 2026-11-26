@@ -60,6 +60,8 @@ fn default_metadata(name: &str) -> ObjectMeta {
 fn valid_backup_spec() -> KafkaBackupSpec {
     KafkaBackupSpec {
         kafka_cluster: valid_kafka_cluster(),
+        schema_registry: None,
+        oauth: None,
         topics: vec!["test-topic".to_string()],
         exclude_topics: vec![],
         on_missing_topic: Default::default(),
@@ -568,6 +570,8 @@ fn backup_plaintext_with_ca_secret_passes_validation() {
 
 fn valid_restore_spec() -> KafkaRestoreSpec {
     KafkaRestoreSpec {
+        schema_registry: None,
+        oauth: None,
         backup_ref: BackupRef {
             name: "my-backup".to_string(),
             namespace: None,

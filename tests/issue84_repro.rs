@@ -92,6 +92,79 @@ fn core_backup(resolved: &ResolvedBackupConfig) -> Config {
 }
 
 #[tokio::test]
+async fn schema_registry_backup_options_and_basic_auth_reach_core() {
+    let resolved = resolved_backup(json!({
+        "schemaRegistry": {
+            "url": "https://registry.example",
+            "auth": {"type": "basic", "username": "api-key", "password": "test-password"},
+            "connection": {"timeout_ms": 2000},
+            "backupOptions": {"subjects": ["orders-*"], "snapshot_interval": "42s"}
+        }
+    }))
+    .await;
+    let config = core_backup(&resolved);
+    let registry = config.schema_registry.unwrap();
+    assert_eq!(registry.connection.as_ref().unwrap().timeout_ms, 2000);
+    assert_eq!(registry.backup_options().subjects, ["orders-*"]);
+    assert_eq!(
+        registry
+            .backup_options()
+            .snapshot_interval_or_default()
+            .as_secs(),
+        42
+    );
+    assert!(matches!(
+        registry.auth,
+        Some(kafka_backup_core::schema_registry::SchemaRegistryAuth::Basic { username, password })
+            if username == "api-key" && password.expose() == "test-password"
+    ));
+    assert!(config.oauth.is_none());
+}
+
+#[tokio::test]
+async fn disabled_schema_registry_never_resolves_oauth() {
+    let config = core_backup(
+        &resolved_backup(json!({
+            "schemaRegistry": {
+                "enabled": false, "url": "unused",
+                "auth": {"type": "oauth", "provider": "not-configured"}
+            }
+        }))
+        .await,
+    );
+    assert!(config.schema_registry.is_none());
+    assert!(config.oauth.is_none());
+}
+
+#[tokio::test]
+async fn restore_registry_options_and_effective_dry_run_reach_core() {
+    let restore: KafkaRestore = serde_json::from_value(json!({
+        "metadata": {"name": "restore"},
+        "spec": {
+            "backupRef": {"name": "", "backupId": BACKUP_ID, "storage": {"pvc": {"claimName": "backup-pvc"}}},
+            "kafkaCluster": {"bootstrapServers": ["kafka:9092"]},
+            "schemaRegistry": {
+                "url": "https://target-registry.example",
+                "restoreOptions": {"strategy": "into_existing", "rewrite_ids": true, "dry_run": true}
+            }
+        }
+    }))
+    .unwrap();
+    kafka_backup_operator::reconcilers::restore::validate(&restore).unwrap();
+    let resolved = build_restore_config(&restore, &test_client(), "default")
+        .await
+        .unwrap();
+    let ResolvedBackupSource::Storage { storage, .. } = &resolved.backup_source else {
+        panic!("direct storage expected");
+    };
+    let config = to_core_restore_config(&resolved, BACKUP_ID, storage, None).unwrap();
+    assert!(config.restore.unwrap().dry_run);
+    let registry = config.schema_registry.unwrap();
+    assert_eq!(registry.url, "https://target-registry.example");
+    assert!(registry.restore_options().rewrite_ids);
+}
+
+#[tokio::test]
 async fn exclude_topics_reach_the_core_selection() {
     let core = core_backup(
         &resolved_backup(json!({"topics": ["*"], "excludeTopics": ["metrics", "syslog-*"]})).await,

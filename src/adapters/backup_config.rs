@@ -2,20 +2,23 @@
 //!
 //! Converts KafkaBackup CRD spec to kafka-backup-core configuration.
 
+use kafka_backup_core::schema_registry::SchemaRegistryConfig;
 use kube::Client;
 
 use crate::crd::{
     CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaClusterSpec, KafkaConnectionSpec,
     MetricsSpec, OnMissingTopicPolicy, RateLimitingSpec,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 
+use super::schema_registry::{resolve_registry, ResolvedRegistryConfig};
 use super::secrets::{get_sasl_credentials, get_tls_credentials_split, TlsCredentials};
 use super::storage_config::{build_storage_config, ResolvedStorage};
 
 /// Fully resolved backup configuration
 #[derive(Debug, Clone)]
 pub struct ResolvedBackupConfig {
+    pub schema_registry: Option<ResolvedRegistryConfig>,
     /// Kafka cluster configuration
     pub kafka: ResolvedKafkaConfig,
     /// Topics to backup
@@ -149,6 +152,33 @@ pub async fn build_backup_config(
 ) -> Result<ResolvedBackupConfig> {
     // Resolve Kafka configuration
     let kafka = build_kafka_config(&backup.spec.kafka_cluster, client, namespace).await?;
+    let schema_registry =
+        if let Some(spec) = backup.spec.schema_registry.as_ref().filter(|s| s.enabled) {
+            let mut registry = SchemaRegistryConfig::new(&spec.url);
+            registry.tls = spec.tls.clone();
+            registry.connection = spec.connection.clone();
+            registry.backup = spec.backup_options.clone();
+            if registry
+                .backup_options()
+                .snapshot_interval_or_default()
+                .is_zero()
+            {
+                return Err(Error::config(
+                    "Schema Registry snapshot_interval must be greater than zero",
+                ));
+            }
+            Some(
+                resolve_registry(
+                    registry,
+                    spec.auth.as_ref(),
+                    backup.spec.oauth.as_ref(),
+                    namespace,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
 
     // Resolve storage configuration
     let storage = build_storage_config(&backup.spec.storage, client, namespace).await?;
@@ -193,6 +223,7 @@ pub async fn build_backup_config(
     };
 
     Ok(ResolvedBackupConfig {
+        schema_registry,
         kafka,
         topics: backup.spec.topics.clone(),
         exclude_topics: backup.spec.exclude_topics.clone(),

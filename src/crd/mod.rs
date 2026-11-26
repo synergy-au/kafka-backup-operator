@@ -5,12 +5,14 @@ mod kafka_backup_validation;
 mod kafka_offset_reset;
 mod kafka_offset_rollback;
 mod kafka_restore;
+mod schema_registry;
 
 pub use kafka_backup::*;
 pub use kafka_backup_validation::*;
 pub use kafka_offset_reset::*;
 pub use kafka_offset_rollback::*;
 pub use kafka_restore::*;
+pub use schema_registry::*;
 
 use kube::CustomResourceExt;
 

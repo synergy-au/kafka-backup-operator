@@ -95,6 +95,28 @@ fn generated_crd_schemas_avoid_unsupported_kubernetes_keywords() {
         violations.join("\n")
     );
 
+    for (kind, options) in [
+        ("KafkaBackup", "backupOptions"),
+        ("KafkaRestore", "restoreOptions"),
+    ] {
+        let crd = crds
+            .iter()
+            .find(|crd| crd["spec"]["names"]["kind"] == kind)
+            .unwrap();
+        let spec = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+            ["properties"];
+        for field in ["auth", "tls", "connection", options] {
+            let schema = &spec["schemaRegistry"]["properties"][field];
+            assert_eq!(schema["type"], "object", "{kind}.{field}");
+            assert_eq!(schema["x-kubernetes-preserve-unknown-fields"], true);
+        }
+        assert_eq!(
+            spec["oauth"]["properties"]["providers"]["additionalProperties"]
+                ["x-kubernetes-preserve-unknown-fields"],
+            true
+        );
+    }
+
     let restore = crds
         .iter()
         .find(|crd| crd["spec"]["names"]["kind"] == "KafkaRestore")

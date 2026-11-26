@@ -1,9 +1,14 @@
 //! KafkaBackup Custom Resource Definition
 
 use chrono::{DateTime, Utc};
+use kafka_backup_core::schema_registry::{
+    SchemaBackupOptions, SchemaConnectionConfig, SchemaRegistryTls,
+};
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+use super::schema_registry::{registry_object, RegistryAuthSpec, RegistryOauthSpec};
 
 /// KafkaBackup resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -26,6 +31,14 @@ use serde::{Deserialize, Serialize};
 pub struct KafkaBackupSpec {
     /// Kafka cluster connection configuration
     pub kafka_cluster: KafkaClusterSpec,
+
+    /// Schema registry connection configuration
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_registry: Option<SchemaRegistryBackupConfig>,
+
+    /// Named OAuth providers for Schema Registry authentication
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<RegistryOauthSpec>,
 
     /// Topics to backup
     pub topics: Vec<String>,
@@ -306,6 +319,38 @@ fn default_username_key() -> String {
 
 fn default_password_key() -> String {
     "password".to_string()
+}
+
+/// Schema Registry backup configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct SchemaRegistryBackupConfig {
+    /// Set to `false` to keep the section but skip the registry.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Schema Registry URL, for example `https://schema-registry:8081`.
+    pub url: String,
+
+    /// How to authenticate. Default: no authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "registry_object")]
+    pub auth: Option<RegistryAuthSpec>,
+
+    /// Server certificate verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "registry_object")]
+    pub tls: Option<SchemaRegistryTls>,
+
+    /// Timeouts, retries and the rate limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "registry_object")]
+    pub connection: Option<SchemaConnectionConfig>,
+
+    /// What a backup captures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "registry_object")]
+    pub backup_options: Option<SchemaBackupOptions>,
 }
 
 /// Storage specification

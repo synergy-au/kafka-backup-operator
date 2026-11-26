@@ -324,6 +324,22 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
+              oauth:
+                description: Named OAuth providers for Schema Registry authentication
+                nullable: true
+                properties:
+                  cache:
+                    description: Upstream token cache settings.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    default: {}
+                    description: Named OAuth providers. The registry auth block selects one by name.
+                    type: object
+                type: object
               onMissingTopic:
                 default: fail
                 description: |-
@@ -398,6 +414,36 @@ spec:
                 description: Cron schedule for automated backups
                 nullable: true
                 type: string
+              schemaRegistry:
+                description: Schema registry connection configuration
+                nullable: true
+                properties:
+                  auth:
+                    description: "How to authenticate. Default: no authentication."
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  backupOptions:
+                    description: What a backup captures.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  connection:
+                    description: Timeouts, retries and the rate limit.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  enabled:
+                    default: true
+                    description: Set to `false` to keep the section but skip the registry.
+                    type: boolean
+                  tls:
+                    description: Server certificate verification.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  url:
+                    description: Schema Registry URL, for example `https://schema-registry:8081`.
+                    type: string
+                required:
+                - url
+                type: object
               segmentMaxBytes:
                 default: 134217728
                 description: Maximum segment size in bytes before rotating
@@ -1308,6 +1354,22 @@ spec:
                 required:
                 - bootstrapServers
                 type: object
+              oauth:
+                description: Named OAuth providers for Schema Registry authentication
+                nullable: true
+                properties:
+                  cache:
+                    description: Upstream token cache settings.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    default: {}
+                    description: Named OAuth providers. The registry auth block selects one by name.
+                    type: object
+                type: object
               offsetReset:
                 description: Consumer offset reset configuration
                 nullable: true
@@ -1467,6 +1529,36 @@ spec:
                     required:
                     - pvcName
                     type: object
+                type: object
+              schemaRegistry:
+                description: Schema registry connection configuration
+                nullable: true
+                properties:
+                  auth:
+                    description: "How to authenticate. Default: no authentication."
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  connection:
+                    description: Timeouts, retries and the rate limit.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  enabled:
+                    default: true
+                    description: Set to `false` to keep the section but skip the registry.
+                    type: boolean
+                  restoreOptions:
+                    description: How schemas are restored into the target registry.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  tls:
+                    description: Server certificate verification.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  url:
+                    description: Schema Registry URL, for example `https://schema-registry:8081`.
+                    type: string
+                required:
+                - url
                 type: object
               stripOffsetHeaders:
                 default: false

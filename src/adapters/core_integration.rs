@@ -25,6 +25,7 @@ use super::backup_config::{
     ResolvedBackupConfig, ResolvedCircuitBreakerConfig, ResolvedKafkaConfig, ResolvedMetricsConfig,
 };
 use super::restore_config::ResolvedRestoreConfig;
+use super::schema_registry::ResolvedRegistryConfig;
 use super::storage_config::ResolvedStorage;
 use super::tls_files::TlsFileManager;
 use super::validation_config::{ResolvedEvidenceConfig, ResolvedValidationConfig};
@@ -49,7 +50,7 @@ pub fn to_core_backup_config(
     // Build metrics config
     let metrics = resolved.metrics.as_ref().map(to_core_metrics_config);
 
-    let config = Config {
+    let mut config = Config {
         mode: Mode::Backup,
         backup_id: backup_id.to_string(),
         source: Some(kafka_config),
@@ -65,6 +66,7 @@ pub fn to_core_backup_config(
         registry_restore: None,
     };
 
+    configure_registry(&mut config, resolved.schema_registry.as_ref())?;
     config.validate()?;
     Ok(config)
 }
@@ -82,7 +84,7 @@ pub fn to_core_restore_config(
     let mut restore_options = to_core_restore_options(resolved);
     restore_options.offset_report = restore_offset_report_path(resolved, backup_id, storage);
 
-    let config = Config {
+    let mut config = Config {
         mode: Mode::Restore,
         backup_id: backup_id.to_string(),
         source: None,
@@ -98,8 +100,24 @@ pub fn to_core_restore_config(
         registry_restore: None,
     };
 
+    configure_registry(&mut config, resolved.schema_registry.as_ref())?;
     config.validate()?;
     Ok(config)
+}
+
+pub(crate) fn configure_registry(
+    config: &mut Config,
+    resolved: Option<&ResolvedRegistryConfig>,
+) -> kafka_backup_core::Result<()> {
+    if let Some(resolved) = resolved {
+        config.schema_registry = Some(resolved.registry.clone());
+        config.oauth = resolved.oauth.clone();
+        if config.oauth.is_some() {
+            kafka_backup_core::oauth::install(config)
+                .map_err(|e| kafka_backup_core::Error::Config(e.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 /// Return true when a restore should collect an offset mapping report.

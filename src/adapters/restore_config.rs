@@ -4,11 +4,12 @@
 
 use std::collections::HashMap;
 
+use kafka_backup_core::schema_registry::SchemaRegistryConfig;
 use kube::Client;
 
 use crate::crd::{
-    BackupRef, HeaderPreflightPolicy, KafkaRestore, OffsetResetSpec, PitrSpec, RollbackSpec,
-    TopicRepartitioningSpec,
+    BackupRef, HeaderPreflightPolicy, KafkaRestore, KafkaRestoreSpec, OffsetResetSpec, PitrSpec,
+    RollbackSpec, TopicRepartitioningSpec,
 };
 use crate::error::Result;
 
@@ -16,11 +17,13 @@ use super::backup_config::{
     build_kafka_config, ResolvedCircuitBreakerConfig, ResolvedKafkaConfig,
     ResolvedRateLimitingConfig,
 };
+use super::schema_registry::{resolve_registry, ResolvedRegistryConfig};
 use super::storage_config::{build_storage_config, ResolvedStorage};
 
 /// Fully resolved restore configuration
 #[derive(Debug, Clone)]
 pub struct ResolvedRestoreConfig {
+    pub schema_registry: Option<ResolvedRegistryConfig>,
     /// Source backup location
     pub backup_source: ResolvedBackupSource,
     /// Target Kafka cluster
@@ -116,6 +119,37 @@ pub struct ResolvedOffsetResetConfig {
     pub strategy: String,
 }
 
+pub fn restore_is_dry_run(spec: &KafkaRestoreSpec) -> bool {
+    spec.dry_run
+        || spec
+            .schema_registry
+            .as_ref()
+            .filter(|s| s.enabled)
+            .and_then(|s| s.restore_options.as_ref())
+            .is_some_and(|s| s.dry_run)
+}
+
+pub(crate) async fn resolve_restore_registry(
+    spec: &KafkaRestoreSpec,
+    namespace: &str,
+) -> Result<Option<ResolvedRegistryConfig>> {
+    let Some(section) = spec.schema_registry.as_ref().filter(|s| s.enabled) else {
+        return Ok(None);
+    };
+    let mut registry = SchemaRegistryConfig::new(&section.url);
+    registry.tls = section.tls.clone();
+    registry.connection = section.connection.clone();
+    registry.restore = section.restore_options.clone();
+    resolve_registry(
+        registry,
+        section.auth.as_ref(),
+        spec.oauth.as_ref(),
+        namespace,
+    )
+    .await
+    .map(Some)
+}
+
 /// Build fully resolved restore configuration from CRD
 pub async fn build_restore_config(
     restore: &KafkaRestore,
@@ -127,6 +161,7 @@ pub async fn build_restore_config(
 
     // Resolve Kafka configuration
     let kafka = build_kafka_config(&restore.spec.kafka_cluster, client, namespace).await?;
+    let schema_registry = resolve_restore_registry(&restore.spec, namespace).await?;
 
     // Build PITR config
     let pitr = restore.spec.pitr.as_ref().map(build_pitr_config);
@@ -160,6 +195,7 @@ pub async fn build_restore_config(
             });
 
     Ok(ResolvedRestoreConfig {
+        schema_registry,
         backup_source,
         kafka,
         topics: restore.spec.topics.clone(),
@@ -177,7 +213,7 @@ pub async fn build_restore_config(
         rollback,
         rate_limiting,
         circuit_breaker,
-        dry_run: restore.spec.dry_run,
+        dry_run: restore_is_dry_run(&restore.spec),
         produce_batch_size: restore.spec.produce_batch_size,
         produce_acks: restore.spec.produce_acks,
         produce_timeout_ms: restore.spec.produce_timeout_ms,

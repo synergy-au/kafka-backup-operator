@@ -8,12 +8,16 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use cron::Schedule;
 use kafka_backup_core::backup::BackupEngine;
+use kafka_backup_core::metrics::{MetricsReport, PrometheusMetrics};
+use kafka_backup_core::{
+    config::Config, schema_registry::run as registry, storage::StorageBackend,
+};
 use kube::{
     api::{Patch, PatchParams},
     runtime::controller::Action,
@@ -558,7 +562,130 @@ fn core_metrics_enabled(resolved: &ResolvedBackupConfig) -> bool {
         .unwrap_or(true)
 }
 
-/// Execute the actual backup using kafka-backup-core library
+async fn snapshot_registry(config: &Config, storage: &Arc<dyn StorageBackend>) -> Result<()> {
+    let options = registry::enabled(config)
+        .expect("enabled snapshot")
+        .backup_options();
+    match registry::snapshot(config, Arc::clone(storage)).await {
+        Ok(manifest) => {
+            info!(backup_id = %config.backup_id, subjects = manifest.subjects_count, "Schema Registry snapshot completed");
+            Ok(())
+        }
+
+        Err(error) => {
+            warn!(backup_id = %config.backup_id, %error, "Schema Registry snapshot failed");
+            if options.fail_on_partial {
+                Err(Error::core(format!(
+                    "Schema Registry snapshot failed: {error}"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn snapshot_writes_to_backup_storage_and_honors_fail_on_partial() {
+        use http_body_util::Full;
+        use hyper::{body::Bytes, server::conn::http1, service::service_fn, Response};
+        use hyper_util::rt::TokioIo;
+        use kafka_backup_core::schema_registry::SchemaRegistryConfig;
+        use std::{
+            convert::Infallible,
+            sync::atomic::{AtomicBool, Ordering},
+        };
+        use tokio::net::TcpListener;
+
+        crate::install_crypto_provider();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let fail = Arc::new(AtomicBool::new(false));
+        let mock = tokio::spawn({
+            let fail = fail.clone();
+            async move {
+                while let Ok((socket, _)) = listener.accept().await {
+                    let fail = fail.clone();
+                    tokio::spawn(http1::Builder::new().serve_connection(
+                        TokioIo::new(socket),
+                        service_fn(move |request| {
+                            let (status, body) = if fail.load(Ordering::Relaxed) {
+                                (400, r#"{"error_code":400,"message":"test rejection"}"#)
+                            } else {
+                                match request.uri().path() {
+                                    "/subjects" => (200, "[]"),
+                                    "/config" => (200, r#"{"compatibilityLevel":"BACKWARD"}"#),
+                                    "/mode" => (200, r#"{"mode":"READWRITE"}"#),
+                                    _ => (404, "{}"),
+                                }
+                            };
+                            async move {
+                                Ok::<_, Infallible>(
+                                    Response::builder()
+                                        .status(status)
+                                        .body(Full::new(Bytes::from_static(body.as_bytes())))
+                                        .unwrap(),
+                                )
+                            }
+                        }),
+                    ));
+                }
+            }
+        });
+        let root = tempfile::tempdir().unwrap();
+        let mut config: Config = serde_json::from_value(json!({
+            "mode": "backup", "backup_id": "test",
+            "storage": {"backend": "filesystem", "path": root.path()},
+        }))
+        .unwrap();
+        config.schema_registry = Some(SchemaRegistryConfig::new(url));
+        let storage = kafka_backup_core::storage::create_backend(&config.storage).unwrap();
+        snapshot_registry(&config, &storage).await.unwrap();
+        assert!(root
+            .path()
+            .join("test/schema-registry/_global_config.json")
+            .is_file());
+
+        fail.store(true, Ordering::Relaxed);
+        snapshot_registry(&config, &storage).await.unwrap();
+        config.schema_registry.as_mut().unwrap().backup =
+            Some(kafka_backup_core::schema_registry::SchemaBackupOptions {
+                fail_on_partial: true,
+                ..Default::default()
+            });
+        assert!(snapshot_registry(&config, &storage).await.is_err());
+        mock.abort();
+    }
+}
+async fn run_backup_engine(
+    config: Config,
+    prometheus: Option<Arc<PrometheusMetrics>>,
+    name: &str,
+) -> Result<MetricsReport> {
+    let engine = BackupEngine::new_with_metrics(config, prometheus)
+        .await
+        .map_err(|e| Error::core(format!("Failed to create backup engine: {e}")))?;
+    let stop_forwarder = crate::shutdown::current().map(|shutdown| {
+        let handle = engine.shutdown_handle();
+        let name = name.to_owned();
+        tokio::spawn(async move {
+            shutdown.await;
+            info!(%name, "Operator shutting down; stopping the running backup engine");
+            let _ = handle.send(());
+        })
+    });
+    let result = engine.run().await;
+    if let Some(task) = stop_forwarder {
+        task.abort();
+    }
+    result.map_err(|e| Error::core(format!("Backup execution failed: {e}")))?;
+    Ok(engine.metrics().report())
+}
+
 async fn execute_backup_internal(
     backup: &KafkaBackup,
     client: &Client,
@@ -592,6 +719,13 @@ async fn execute_backup_internal(
     // 3. Convert to kafka-backup-core Config
     let core_config = to_core_backup_config(&resolved_config, &backup_id, tls_manager.as_ref())
         .map_err(|e| Error::Core(format!("Failed to build core config: {}", e)))?;
+    let registry_snapshot = registry::enabled(&core_config)
+        .map(|_| {
+            kafka_backup_core::storage::create_backend(&core_config.storage)
+                .map(|storage| (core_config.clone(), storage))
+                .map_err(|e| Error::storage(format!("Cannot open registry snapshot storage: {e}")))
+        })
+        .transpose()?;
 
     info!(
         name = %name,
@@ -627,42 +761,47 @@ async fn execute_backup_internal(
         None
     };
 
-    let engine = BackupEngine::new_with_metrics(core_config, core_prometheus)
-        .await
-        .map_err(|e| Error::Core(format!("Failed to create backup engine: {}", e)))?;
-
-    // 6. Get metrics handle for tracking progress
-    let metrics_handle = engine.metrics();
-
-    // 6b. Stop the engine gracefully when the operator is asked to shut down
-    // (SIGTERM during a rollout, node drain or eviction): it checkpoints and
-    // returns instead of being cut off mid-run, and the leader lease is only
-    // released once this reconcile has returned (issue #79).
-    let stop_forwarder = crate::shutdown::current().map(|shutdown| {
-        let handle = engine.shutdown_handle();
-        let name = name.clone();
-        tokio::spawn(async move {
-            shutdown.await;
-            info!(name = %name, "Operator shutting down; stopping the running backup engine");
-            let _ = handle.send(());
-        })
-    });
-
-    // 7. Run the backup (must run in the same working directory as engine was created)
-    let run_result = engine.run().await;
-    if let Some(task) = stop_forwarder {
-        task.abort();
-    }
+    let stop_snapshots = tokio_util::sync::CancellationToken::new();
+    let run_backup = async {
+        let result = run_backup_engine(core_config, core_prometheus, &name).await;
+        stop_snapshots.cancel();
+        result
+    };
+    let periodic = async {
+        if let Some((config, storage)) = &registry_snapshot {
+            if resolved_config.backup_options.continuous {
+                let options = registry::enabled(config)
+                    .expect("enabled snapshot")
+                    .backup_options();
+                let mut ticker = tokio::time::interval(options.snapshot_interval_or_default());
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = stop_snapshots.cancelled() => break,
+                        _ = ticker.tick() => {
+                            let _ = snapshot_registry(config, storage).await;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    let (run_result, ()) = tokio::join!(run_backup, periodic);
 
     // Restore original working directory after backup completes
     if let Some(ref orig) = original_dir {
         let _ = std::env::set_current_dir(orig);
     }
 
-    run_result.map_err(|e| Error::Core(format!("Backup execution failed: {}", e)))?;
-
-    // 8. Extract final metrics
-    let metrics_report = metrics_handle.report();
+    let registry_result = if let Some((config, storage)) = &registry_snapshot {
+        snapshot_registry(config, storage).await
+    } else {
+        Ok(())
+    };
+    // Keep the Kafka error primary even when the final registry pass also failed.
+    let metrics_report = run_result?;
+    registry_result?;
 
     info!(
         name = %name,

@@ -12,18 +12,20 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use kafka_backup_core::restore::engine::RestoreEngine;
 use kafka_backup_core::restore::ThreePhaseRestore;
+use kafka_backup_core::{config::Config, schema_registry::run as registry};
 use kube::{
     api::{Patch, PatchParams},
     runtime::controller::Action,
     Api, Client, ResourceExt,
 };
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::status;
 use crate::adapters::{
-    build_restore_config, default_tls_dir, to_core_restore_config, ResolvedBackupSource,
-    ResolvedStorage, TlsFileManager,
+    build_restore_config, default_tls_dir, resolve_restore_registry, restore_is_dry_run,
+    to_core_restore_config, ResolvedBackupSource, ResolvedStorage, TlsFileManager,
 };
 use crate::crd::{KafkaBackup, KafkaRestore};
 use crate::error::{Error, Result};
@@ -31,6 +33,44 @@ use crate::metrics;
 use crate::reconcilers::runs::{self, RunningState};
 
 const KIND: &str = "KafkaRestore";
+
+async fn restore_registry_before_records(config: &mut Config) -> Result<()> {
+    if registry::enabled(config).is_none() {
+        return Ok(());
+    }
+    let storage = kafka_backup_core::storage::create_backend(&config.storage)
+        .map_err(|e| Error::storage(format!("Cannot open registry snapshot storage: {e}")))?;
+    let cancel = CancellationToken::new();
+    let restore = registry::restore(
+        config,
+        storage,
+        registry::RestoreScope::BeforeRecords,
+        cancel.clone(),
+    );
+    tokio::pin!(restore);
+    let outcome = if let Some(shutdown) = crate::shutdown::current() {
+        tokio::select! {
+            biased;
+            _ = shutdown => {
+                cancel.cancel();
+                let _ = restore.await;
+                return Err(Error::core("Schema Registry restore interrupted; Kafka restore did not start"));
+            }
+            outcome = &mut restore => outcome,
+        }
+    } else {
+        restore.await
+    }.map_err(|e| Error::core(format!("Schema Registry restore failed: {e}")))?;
+    if let Some(outcome) = outcome {
+        if let Some(error) = outcome.error {
+            return Err(Error::core(format!(
+                "Schema Registry restore failed: {error}"
+            )));
+        }
+        info!(report_key = ?outcome.report_key, id_rewrite = ?outcome.id_rewrite, "Schema Registry restore completed");
+    }
+    Ok(())
+}
 
 /// Validate the KafkaRestore spec
 pub fn validate(restore: &KafkaRestore) -> Result<()> {
@@ -123,7 +163,7 @@ pub fn validate(restore: &KafkaRestore) -> Result<()> {
 }
 
 fn validate_restore_target_safety(restore: &KafkaRestore) -> Result<()> {
-    if restore.spec.dry_run || restore.spec.purge_topics {
+    if restore_is_dry_run(&restore.spec) || restore.spec.purge_topics {
         return Ok(());
     }
 
@@ -198,7 +238,7 @@ pub async fn execute(restore: &KafkaRestore, client: &Client, namespace: &str) -
     runs::record_start(KIND, &restore.metadata);
 
     // Check if this is a dry run
-    if restore.spec.dry_run {
+    if restore_is_dry_run(&restore.spec) {
         info!(name = %name, "Dry run mode - validating restore parameters");
         return execute_dry_run(restore, client, namespace).await;
     }
@@ -328,6 +368,32 @@ async fn execute_dry_run(
     let name = restore.name_any();
     let api: Api<KafkaRestore> = Api::namespaced(client.clone(), namespace);
 
+    if let Some(resolved) = resolve_restore_registry(&restore.spec, namespace).await? {
+        resolved
+            .registry
+            .validate()
+            .map_err(|e| Error::config(e.to_string()))?;
+        let mut config = Config {
+            mode: kafka_backup_core::config::Mode::Restore,
+            backup_id: String::new(),
+            source: None,
+            target: None,
+            storage: kafka_backup_core::storage::StorageBackendConfig::Filesystem {
+                path: ".".into(),
+            },
+            backup: None,
+            restore: None,
+            offset_storage: None,
+            metrics: None,
+            oauth: None,
+            schema_registry: None,
+            apicurio_registry: None,
+            registry_restore: None,
+        };
+        crate::adapters::configure_registry(&mut config, Some(&resolved))
+            .map_err(|e| Error::config(e.to_string()))?;
+    }
+
     // TODO: Validate backup exists and is accessible
     // TODO: Validate target cluster is reachable
     // TODO: Validate topics can be created/written to
@@ -397,7 +463,7 @@ async fn execute_restore_internal(
     };
 
     // 3. Convert to kafka-backup-core Config
-    let core_config =
+    let mut core_config =
         to_core_restore_config(&resolved_config, &backup_id, &storage, tls_manager.as_ref())
             .map_err(|e| Error::Core(format!("Failed to build core config: {}", e)))?;
 
@@ -412,6 +478,8 @@ async fn execute_restore_internal(
             tokio::fs::create_dir_all(parent).await?;
         }
     }
+
+    restore_registry_before_records(&mut core_config).await?;
 
     let run_three_phase = core_config
         .restore
@@ -554,4 +622,27 @@ pub async fn update_status_failed(
     });
 
     status::patch_status(&api, &name, status).await
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn restore_registry_failure_prevents_record_restore_handoff() {
+        crate::install_crypto_provider();
+        let storage = tempfile::tempdir().unwrap();
+        let mut config: Config = serde_json::from_value(json!({
+            "mode": "restore",
+            "backup_id": "missing",
+            "target": {"bootstrap_servers": ["unused:9092"]},
+            "storage": {"backend": "filesystem", "path": storage.path()},
+            "schema_registry": {"url": "http://127.0.0.1:1", "restore": {"strategy": "into_existing"}}
+        }))
+        .unwrap();
+        let error = restore_registry_before_records(&mut config)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("Schema Registry restore failed"));
+    }
 }

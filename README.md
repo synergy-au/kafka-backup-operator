@@ -392,6 +392,76 @@ This release aligns the operator CRDs and adapters with `kafka-backup-core` `v0.
 
 ## Configuration Examples
 
+### Confluent Schema Registry
+
+Apply the updated CRDs before using these fields (including when upgrading
+with Helm, which does not upgrade existing CRDs automatically). Add a
+`schemaRegistry` block under a `KafkaBackup` resource's `spec` to capture
+schemas alongside the Kafka data:
+
+```yaml
+schemaRegistry:
+  url: https://source-registry.example.com
+  connection:
+    timeout_ms: 10000
+  backupOptions:
+    subjects: ["orders-*"]
+    snapshot_interval: 15m
+    fail_on_partial: true
+```
+
+In the `KafkaRestore` resource, configure the **target** registry:
+
+```yaml
+schemaRegistry:
+  url: https://target-registry.example.com
+  restoreOptions:
+    strategy: into_existing
+    rewrite_ids: true
+```
+
+The operator restores schemas before Kafka records and stops if the registry
+restore fails. Either `spec.dryRun` or an enabled registry's
+`restoreOptions.dry_run` makes the whole restore validation-only; it does not
+preview or write to either service. Omitting `schemaRegistry` or setting
+`enabled: false` leaves the registry out of the operation. Nested settings use
+the core library's snake_case keys. Continuous backups take periodic snapshots
+and a final snapshot; one-shot backups take a single snapshot. With
+`fail_on_partial: false` (default), registry snapshot failures are logged and
+do not fail an otherwise successful Kafka backup.
+
+For OAuth, add `auth` inside `schemaRegistry` and `oauth` alongside it under
+`spec`. This example uses a Secret volume mounted into the operator pod:
+
+```yaml
+schemaRegistry:
+  url: https://target-registry.example.com
+  auth:
+    type: oauth
+    provider: registry-oidc
+oauth:
+  providers:
+    registry-oidc:
+      type: oidc_client_credentials
+      token_endpoint_url: https://identity.example.com/oauth2/token
+      client_id: kafka-backup
+      client_secret_file: /etc/kafka-backup-operator/registry/data/oidc-client-secret
+      scope: schema-registry
+```
+
+Replace `data` with the namespace of the backup or restore. Use the chart's
+`extraVolumes` and `extraVolumeMounts` to mount the credential directory
+read-only into the operator pod. Explicit OAuth file paths, `tls.ca_cert`, and
+the CA and keypair paths in `auth: {type: mtls, ...}` must point to files under
+`/etc/kafka-backup-operator/registry/<resource-namespace>/`. Other supported OAuth
+provider types are `azure_managed_identity`, `azure_workload_identity`, and
+`file`. Registry OAuth is separate from authentication to Kafka brokers.
+
+Grant write access to these resources only to principals trusted to use the
+mounted credentials and configure their destinations. Restrict operator egress
+to approved registries and identity providers. If using `auth: {type: basic, ...}`,
+its `username` and `password` are inline and visible to anyone who can read the resource.
+
 ### Backup to Azure Blob Storage (with Workload Identity)
 
 ```yaml
