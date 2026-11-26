@@ -1,14 +1,89 @@
-use std::path::{Component, Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path, PathBuf},
+};
 
 use kafka_backup_core::{
-    oauth::config::{OauthConfig, OidcProviderConfig, ProviderConfig, Secret},
-    schema_registry::{SchemaRegistryAuth, SchemaRegistryConfig, SchemaRegistryOAuth},
+    oauth::{
+        config::{
+            AzureManagedIdentityConfig, AzureWorkloadIdentityConfig, CacheConfig,
+            FileProviderConfig, OauthConfig, OidcProviderConfig, ProviderConfig, Secret,
+        },
+        http::ClientAuth,
+    },
+    schema_registry::{SchemaRegistryAuth, SchemaRegistryConfig},
 };
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{
-    crd::{RegistryAuthSpec, RegistryOauthSpec, RegistryProviderSpec},
-    error::{Error, Result},
-};
+use crate::error::{Error, Result};
+
+pub(crate) fn registry_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type": "object", "x-kubernetes-preserve-unknown-fields": true})
+}
+
+/// Adds nested provider definitions to core's provider-name authentication binding.
+#[derive(Debug, Clone, Serialize)]
+pub struct RegistryAuthSpec {
+    #[serde(flatten)]
+    pub auth: SchemaRegistryAuth,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub providers: BTreeMap<String, RegistryProviderSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+}
+
+impl<'de> Deserialize<'de> for RegistryAuthSpec {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(flatten)]
+            auth: SchemaRegistryAuth,
+            providers: Option<BTreeMap<String, RegistryProviderSpec>>,
+            cache: Option<CacheConfig>,
+        }
+
+        let wire = Wire::deserialize(deserializer)?;
+        if !matches!(&wire.auth, SchemaRegistryAuth::OAuth(_))
+            && (wire.providers.is_some() || wire.cache.is_some())
+        {
+            return Err(serde::de::Error::custom(
+                "Schema Registry providers and cache are only valid for auth type oauth",
+            ));
+        }
+        Ok(Self {
+            auth: wire.auth,
+            providers: wire.providers.unwrap_or_default(),
+            cache: wire.cache,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RegistryProviderSpec {
+    OidcClientCredentials(RegistryOidcSpec),
+    AzureManagedIdentity(AzureManagedIdentityConfig),
+    AzureWorkloadIdentity(AzureWorkloadIdentityConfig),
+    File(FileProviderConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryOidcSpec {
+    pub token_endpoint_url: Option<String>,
+    pub issuer: Option<String>,
+    pub client_id: String,
+    pub client_secret_file: PathBuf,
+    #[serde(default)]
+    pub client_auth: ClientAuth,
+    pub scope: Option<String>,
+    pub audience: Option<String>,
+    #[serde(default)]
+    pub extra_params: BTreeMap<String, String>,
+    pub ca_cert: Option<PathBuf>,
+    #[serde(default)]
+    pub allow_insecure_http: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct ResolvedRegistryConfig {
@@ -19,7 +94,6 @@ pub struct ResolvedRegistryConfig {
 pub(super) async fn resolve_registry(
     mut registry: SchemaRegistryConfig,
     auth: Option<&RegistryAuthSpec>,
-    oauth: Option<&RegistryOauthSpec>,
     namespace: &str,
 ) -> Result<ResolvedRegistryConfig> {
     let root = Path::new("/etc/kafka-backup-operator/registry").join(namespace);
@@ -33,56 +107,51 @@ pub(super) async fn resolve_registry(
     let mut resolved_oauth = None;
     registry.auth = match auth {
         None => None,
-        Some(RegistryAuthSpec::None) => Some(SchemaRegistryAuth::None),
-        Some(RegistryAuthSpec::Basic { username, password }) => Some(SchemaRegistryAuth::Basic {
-            username: username.clone(),
-            password: Secret::new(password.clone()),
-        }),
-        Some(RegistryAuthSpec::MutualTls {
-            client_cert,
-            client_key,
-            ca_cert,
-        }) => Some(SchemaRegistryAuth::MutualTls {
-            client_cert: checked_file(&root, Path::new(client_cert))
-                .await?
-                .display()
-                .to_string(),
-            client_key: checked_file(&root, Path::new(client_key))
-                .await?
-                .display()
-                .to_string(),
-            ca_cert: match ca_cert {
-                Some(path) => Some(
-                    checked_file(&root, Path::new(path))
-                        .await?
-                        .display()
-                        .to_string(),
-                ),
-                None => None,
+        Some(spec) => Some(match &spec.auth {
+            SchemaRegistryAuth::None | SchemaRegistryAuth::Basic { .. } => spec.auth.clone(),
+            SchemaRegistryAuth::MutualTls {
+                client_cert,
+                client_key,
+                ca_cert,
+            } => SchemaRegistryAuth::MutualTls {
+                client_cert: checked_file(&root, Path::new(client_cert))
+                    .await?
+                    .display()
+                    .to_string(),
+                client_key: checked_file(&root, Path::new(client_key))
+                    .await?
+                    .display()
+                    .to_string(),
+                ca_cert: match ca_cert {
+                    Some(path) => Some(
+                        checked_file(&root, Path::new(path))
+                            .await?
+                            .display()
+                            .to_string(),
+                    ),
+                    None => None,
+                },
             },
-        }),
-        Some(RegistryAuthSpec::OAuth {
-            provider,
-            target_sr_cluster,
-            identity_pool_id,
-        }) => {
-            let oauth = oauth.ok_or_else(|| {
-                Error::config("Schema Registry OAuth requires spec.oauth.providers")
-            })?;
-            let selected = oauth.providers.get(provider).ok_or_else(|| {
-                Error::config(format!(
-                    "Schema Registry OAuth provider '{provider}' is not defined"
+            SchemaRegistryAuth::OAuth(binding) => {
+                let provider = &binding.provider;
+                let selected = spec.providers.get(provider).ok_or_else(|| {
+                    Error::config(format!(
+                        "Schema Registry OAuth provider '{provider}' is not defined in schemaRegistry.auth.providers"
+                    ))
+                })?;
+                resolved_oauth = Some(OauthConfig {
+                    providers: [(provider.clone(), resolve_provider(selected, &root).await?)]
+                        .into(),
+                    cache: spec.cache.clone().unwrap_or_default(),
+                });
+                SchemaRegistryAuth::OAuth(binding.clone())
+            }
+            _ => {
+                return Err(Error::config(
+                    "Unsupported Schema Registry authentication type",
                 ))
-            })?;
-            resolved_oauth = Some(OauthConfig {
-                providers: [(provider.clone(), resolve_provider(selected, &root).await?)].into(),
-                cache: oauth.cache.clone(),
-            });
-            let mut binding = SchemaRegistryOAuth::new(provider);
-            binding.target_sr_cluster = target_sr_cluster.clone();
-            binding.identity_pool_id = identity_pool_id.clone();
-            Some(SchemaRegistryAuth::OAuth(binding))
-        }
+            }
+        }),
     };
     Ok(ResolvedRegistryConfig {
         registry,
@@ -167,6 +236,126 @@ async fn checked_file(root: &Path, path: &Path) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn oauth_resolves_only_the_selected_provider_and_preserves_binding() {
+        let auth = serde_json::from_value(json!({
+            "type": "oauth",
+            "provider": "registry",
+            "providers": {
+                "registry": {
+                    "type": "azure_managed_identity",
+                    "resource": "api://registry"
+                },
+                "unused": {"type": "file", "path": "/outside/token"}
+            },
+            "cache": {"refresh_fraction": 0.65},
+            "target_sr_cluster": "lsrc-test",
+            "identity_pool_id": "pool-test"
+        }))
+        .unwrap();
+
+        let resolved = resolve_registry(
+            SchemaRegistryConfig::new("https://registry.example"),
+            Some(&auth),
+            "default",
+        )
+        .await
+        .unwrap();
+
+        let Some(SchemaRegistryAuth::OAuth(binding)) = resolved.registry.auth else {
+            panic!("OAuth registry binding expected");
+        };
+        assert_eq!(binding.provider, "registry");
+        assert_eq!(binding.target_sr_cluster.as_deref(), Some("lsrc-test"));
+        assert_eq!(binding.identity_pool_id.as_deref(), Some("pool-test"));
+        let oauth = resolved.oauth.unwrap();
+        assert_eq!(oauth.providers.len(), 1);
+        assert_eq!(oauth.cache.refresh_fraction, Some(0.65));
+        assert!(matches!(
+            oauth.providers.get("registry"),
+            Some(ProviderConfig::AzureManagedIdentity(provider))
+                if provider.resource.as_deref() == Some("api://registry")
+        ));
+    }
+
+    #[tokio::test]
+    async fn oauth_rejects_missing_or_undefined_providers() {
+        for providers in [
+            json!({}),
+            json!({"other": {"type": "azure_managed_identity"}}),
+        ] {
+            let auth = serde_json::from_value(json!({
+                "type": "oauth", "provider": "missing", "providers": providers
+            }))
+            .unwrap();
+            let error = resolve_registry(
+                SchemaRegistryConfig::new("https://registry.example"),
+                Some(&auth),
+                "default",
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("provider 'missing' is not defined in schemaRegistry.auth.providers"),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_rejects_oauth_fields_for_other_auth_types_and_unknown_settings() {
+        for invalid in [
+            json!({"type": "none", "providers": {}}),
+            json!({"type": "basic", "username": "user", "password": "secret", "cache": {}}),
+            json!({"type": "oauth", "provider": "registry", "providerz": {}}),
+            json!({
+                "type": "oauth", "provider": "registry",
+                "providers": {"registry": {"type": "static", "token": "secret"}}
+            }),
+            json!({
+                "type": "oauth", "provider": "registry",
+                "providers": {"registry": {
+                    "type": "oidc_client_credentials", "client_id": "operator",
+                    "client_secret": "inline-secret"
+                }}
+            }),
+            json!({
+                "type": "oauth", "provider": "registry",
+                "providers": {"registry": {
+                    "type": "azure_managed_identity", "resorce": "api://registry"
+                }}
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<RegistryAuthSpec>(invalid.clone()).is_err(),
+                "unexpectedly accepted {invalid}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn mtls_rejects_credentials_outside_the_namespace_mount() {
+        let auth = serde_json::from_value(json!({
+            "type": "mtls",
+            "client_cert": "/outside/client.crt",
+            "client_key": "/outside/client.key"
+        }))
+        .unwrap();
+        let error = resolve_registry(
+            SchemaRegistryConfig::new("https://registry.example"),
+            Some(&auth),
+            "default",
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains(
+            "Registry credential path must name a file under /etc/kafka-backup-operator/registry/default"
+        ));
+    }
 
     #[tokio::test]
     async fn oidc_uses_mounted_credentials_and_rejects_empty_files() {

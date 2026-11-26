@@ -8,7 +8,8 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::schema_registry::{registry_object, RegistryAuthSpec, RegistryOauthSpec};
+use crate::adapters::{registry_object, RegistryAuthSpec};
+
 use super::{CircuitBreakerSpec, Condition, KafkaClusterSpec, RateLimitingSpec, StorageSpec};
 
 /// KafkaRestore resource specification
@@ -38,10 +39,6 @@ pub struct KafkaRestoreSpec {
     /// Schema registry connection configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_registry: Option<SchemaRegistryRestoreConfig>,
-
-    /// Named OAuth providers for Schema Registry authentication
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub oauth: Option<RegistryOauthSpec>,
 
     /// Topics to restore (empty = all topics from backup)
     #[serde(default)]

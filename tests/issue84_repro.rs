@@ -91,6 +91,104 @@ fn core_backup(resolved: &ResolvedBackupConfig) -> Config {
     to_core_backup_config(resolved, BACKUP_ID, None).expect("core config builds")
 }
 
+fn registry_oauth_auth() -> serde_json::Value {
+    json!({
+        "type": "oauth",
+        "provider": "registry",
+        "providers": {
+            "registry": {"type": "azure_managed_identity", "resource": "api://registry"},
+            "unused": {"type": "file", "path": "/outside/token"}
+        },
+        "cache": {"refresh_fraction": 0.65, "clock_skew": "7s"},
+        "target_sr_cluster": "lsrc-test",
+        "identity_pool_id": "pool-test"
+    })
+}
+
+fn assert_registry_oauth(config: &Config) {
+    let registry = config.schema_registry.as_ref().unwrap();
+    let Some(kafka_backup_core::schema_registry::SchemaRegistryAuth::OAuth(binding)) =
+        &registry.auth
+    else {
+        panic!("OAuth registry binding expected");
+    };
+    assert_eq!(binding.provider, "registry");
+    assert_eq!(binding.target_sr_cluster.as_deref(), Some("lsrc-test"));
+    assert_eq!(binding.identity_pool_id.as_deref(), Some("pool-test"));
+    assert!(binding.token_source.is_some());
+    let oauth = config.oauth.as_ref().unwrap();
+    assert_eq!(oauth.providers.len(), 1);
+    assert!(matches!(
+        oauth.providers.get("registry"),
+        Some(kafka_backup_core::oauth::config::ProviderConfig::AzureManagedIdentity(provider))
+            if provider.resource.as_deref() == Some("api://registry")
+    ));
+    assert_eq!(oauth.cache.refresh_fraction, Some(0.65));
+    assert_eq!(oauth.cache.clock_skew.unwrap().as_secs(), 7);
+}
+
+#[test]
+fn schema_registry_oauth_round_trips_only_inside_auth() {
+    let section = json!({
+        "url": "https://registry.example",
+        "auth": registry_oauth_auth()
+    });
+    for spec in [
+        serde_json::to_value(backup_spec(json!({"schemaRegistry": section})).unwrap()).unwrap(),
+        serde_json::to_value(restore_spec(json!({"schemaRegistry": section})).unwrap()).unwrap(),
+    ] {
+        assert!(spec.get("oauth").is_none());
+        let registry = &spec["schemaRegistry"];
+        assert!(registry.get("oauth").is_none());
+        assert!(registry.get("providers").is_none());
+        assert!(registry.get("cache").is_none());
+        let auth = &registry["auth"];
+        assert_eq!(auth["type"], "oauth");
+        assert_eq!(auth["provider"], "registry");
+        assert_eq!(auth["providers"]["registry"]["resource"], "api://registry");
+        assert_eq!(auth["providers"]["unused"]["path"], "/outside/token");
+        assert_eq!(auth["cache"], registry_oauth_auth()["cache"]);
+        assert_eq!(auth["target_sr_cluster"], "lsrc-test");
+        assert_eq!(auth["identity_pool_id"], "pool-test");
+    }
+}
+
+#[tokio::test]
+async fn schema_registry_oauth_reaches_core_from_backup_auth() {
+    let config = core_backup(
+        &resolved_backup(json!({
+            "schemaRegistry": {
+                "url": "https://registry.example",
+                "auth": registry_oauth_auth()
+            }
+        }))
+        .await,
+    );
+    assert_registry_oauth(&config);
+}
+
+#[tokio::test]
+async fn schema_registry_oauth_does_not_use_top_level_providers() {
+    let backup = KafkaBackup::new(
+        "backup",
+        backup_spec(json!({
+            "schemaRegistry": {
+                "url": "https://registry.example",
+                "auth": {"type": "oauth", "provider": "registry"}
+            },
+            "oauth": {"providers": registry_oauth_auth()["providers"]}
+        }))
+        .unwrap(),
+    );
+    let error = build_backup_config(&backup, &test_client(), "default")
+        .await
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("schemaRegistry.auth.providers"),
+        "{error}"
+    );
+}
+
 #[tokio::test]
 async fn schema_registry_backup_options_and_basic_auth_reach_core() {
     let resolved = resolved_backup(json!({
@@ -145,6 +243,7 @@ async fn restore_registry_options_and_effective_dry_run_reach_core() {
             "kafkaCluster": {"bootstrapServers": ["kafka:9092"]},
             "schemaRegistry": {
                 "url": "https://target-registry.example",
+                "auth": registry_oauth_auth(),
                 "restoreOptions": {"strategy": "into_existing", "rewrite_ids": true, "dry_run": true}
             }
         }
@@ -158,6 +257,7 @@ async fn restore_registry_options_and_effective_dry_run_reach_core() {
         panic!("direct storage expected");
     };
     let config = to_core_restore_config(&resolved, BACKUP_ID, storage, None).unwrap();
+    assert_registry_oauth(&config);
     assert!(config.restore.unwrap().dry_run);
     let registry = config.schema_registry.unwrap();
     assert_eq!(registry.url, "https://target-registry.example");

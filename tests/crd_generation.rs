@@ -110,11 +110,14 @@ fn generated_crd_schemas_avoid_unsupported_kubernetes_keywords() {
             assert_eq!(schema["type"], "object", "{kind}.{field}");
             assert_eq!(schema["x-kubernetes-preserve-unknown-fields"], true);
         }
-        assert_eq!(
-            spec["oauth"]["properties"]["providers"]["additionalProperties"]
-                ["x-kubernetes-preserve-unknown-fields"],
-            true
-        );
+        assert!(spec.get("oauth").is_none(), "{kind} exposes spec.oauth");
+        let registry = &spec["schemaRegistry"]["properties"];
+        for field in ["oauth", "providers", "cache"] {
+            assert!(
+                registry.get(field).is_none(),
+                "{kind} exposes schemaRegistry.{field} outside auth"
+            );
+        }
     }
 
     let restore = crds

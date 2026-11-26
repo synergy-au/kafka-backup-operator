@@ -167,15 +167,7 @@ pub async fn build_backup_config(
                     "Schema Registry snapshot_interval must be greater than zero",
                 ));
             }
-            Some(
-                resolve_registry(
-                    registry,
-                    spec.auth.as_ref(),
-                    backup.spec.oauth.as_ref(),
-                    namespace,
-                )
-                .await?,
-            )
+            Some(resolve_registry(registry, spec.auth.as_ref(), namespace).await?)
         } else {
             None
         };

@@ -8,7 +8,7 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::schema_registry::{registry_object, RegistryAuthSpec, RegistryOauthSpec};
+use crate::adapters::{registry_object, RegistryAuthSpec};
 
 /// KafkaBackup resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -35,10 +35,6 @@ pub struct KafkaBackupSpec {
     /// Schema registry connection configuration
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schema_registry: Option<SchemaRegistryBackupConfig>,
-
-    /// Named OAuth providers for Schema Registry authentication
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub oauth: Option<RegistryOauthSpec>,
 
     /// Topics to backup
     pub topics: Vec<String>,

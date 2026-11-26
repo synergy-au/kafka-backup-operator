@@ -324,22 +324,6 @@ spec:
                     minimum: 0.0
                     type: integer
                 type: object
-              oauth:
-                description: Named OAuth providers for Schema Registry authentication
-                nullable: true
-                properties:
-                  cache:
-                    description: Upstream token cache settings.
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  providers:
-                    additionalProperties:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    default: {}
-                    description: Named OAuth providers. The registry auth block selects one by name.
-                    type: object
-                type: object
               onMissingTopic:
                 default: fail
                 description: |-
@@ -1353,22 +1337,6 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
-                type: object
-              oauth:
-                description: Named OAuth providers for Schema Registry authentication
-                nullable: true
-                properties:
-                  cache:
-                    description: Upstream token cache settings.
-                    type: object
-                    x-kubernetes-preserve-unknown-fields: true
-                  providers:
-                    additionalProperties:
-                      type: object
-                      x-kubernetes-preserve-unknown-fields: true
-                    default: {}
-                    description: Named OAuth providers. The registry auth block selects one by name.
-                    type: object
                 type: object
               offsetReset:
                 description: Consumer offset reset configuration

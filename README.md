@@ -430,8 +430,9 @@ and a final snapshot; one-shot backups take a single snapshot. With
 `fail_on_partial: false` (default), registry snapshot failures are logged and
 do not fail an otherwise successful Kafka backup.
 
-For OAuth, add `auth` inside `schemaRegistry` and `oauth` alongside it under
-`spec`. This example uses a Secret volume mounted into the operator pod:
+For OAuth, configure the provider binding, named providers, and optional cache
+settings only inside `schemaRegistry.auth` on either resource. This example
+uses a Secret volume mounted into the operator pod:
 
 ```yaml
 schemaRegistry:
@@ -439,15 +440,19 @@ schemaRegistry:
   auth:
     type: oauth
     provider: registry-oidc
-oauth:
-  providers:
-    registry-oidc:
-      type: oidc_client_credentials
-      token_endpoint_url: https://identity.example.com/oauth2/token
-      client_id: kafka-backup
-      client_secret_file: /etc/kafka-backup-operator/registry/data/oidc-client-secret
-      scope: schema-registry
+    providers:
+      registry-oidc:
+        type: oidc_client_credentials
+        token_endpoint_url: https://identity.example.com/oauth2/token
+        client_id: kafka-backup
+        client_secret_file: /etc/kafka-backup-operator/registry/data/oidc-client-secret
+        scope: schema-registry
+    cache:
+      refresh_before_expiry: 1m
 ```
+
+`provider` selects one entry in `auth.providers`; only that provider is resolved.
+Optional `target_sr_cluster` and `identity_pool_id` also belong inside `auth`.
 
 Replace `data` with the namespace of the backup or restore. Use the chart's
 `extraVolumes` and `extraVolumeMounts` to mount the credential directory

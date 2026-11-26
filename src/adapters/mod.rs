@@ -14,7 +14,10 @@ pub use backup_config::*;
 pub use core_integration::*;
 pub use evidence::*;
 pub use restore_config::*;
-pub use schema_registry::ResolvedRegistryConfig;
+pub(crate) use schema_registry::registry_object;
+pub use schema_registry::{
+    RegistryAuthSpec, RegistryOidcSpec, RegistryProviderSpec, ResolvedRegistryConfig,
+};
 pub use secrets::*;
 pub use storage_config::*;
 pub use tls_files::*;

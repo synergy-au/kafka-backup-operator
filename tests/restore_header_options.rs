@@ -92,7 +92,6 @@ fn struct_literal_fields_are_present() {
     // Guards the field names used by other test fixtures.
     let spec = KafkaRestoreSpec {
         schema_registry: None,
-        oauth: None,
         backup_ref: BackupRef {
             name: String::new(),
             namespace: None,
