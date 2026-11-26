@@ -5,12 +5,67 @@
 use std::path::Path;
 
 use kafka_backup_core::{
-    oauth::config::OauthConfig,
-    schema_registry::{SchemaRegistryAuth, SchemaRegistryConfig},
+    oauth::{config::OauthConfig, Secret},
+    schema_registry::{SchemaRegistryAuth, SchemaRegistryConfig, SchemaRegistryOAuth},
 };
+use serde::{Deserialize, Serialize};
 
-use super::oauth::{checked_file, OauthSpec};
+use super::oauth::{checked_file, read_credential_file, OauthSpec};
 use crate::error::{Error, Result};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RegistryAuthSpec {
+    None,
+    Basic {
+        #[serde(rename = "usernameFilePath")]
+        username_file_path: String,
+        #[serde(rename = "passwordFilePath")]
+        password_file_path: String,
+    },
+    #[serde(rename = "mtls")]
+    MutualTls {
+        client_cert: String,
+        client_key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ca_cert: Option<String>,
+    },
+    #[serde(rename = "oauth")]
+    OAuth(SchemaRegistryOAuth),
+}
+
+pub(crate) fn registry_auth_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mounted_path = "^/etc/kafka-backup-operator/registry/[^/]+/.+";
+    schemars::json_schema!({
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+            "type": {"type": "string", "enum": ["none", "basic", "mtls", "oauth"]},
+            "usernameFilePath": {"type": "string", "pattern": mounted_path, "description": "Mounted file containing the Basic username."},
+            "passwordFilePath": {"type": "string", "pattern": mounted_path, "description": "Mounted file containing the Basic password."},
+            "client_cert": {"type": "string", "pattern": mounted_path, "description": "Mounted PEM client certificate path."},
+            "client_key": {"type": "string", "pattern": mounted_path, "description": "Mounted PEM client private key path."},
+            "ca_cert": {"type": "string", "pattern": mounted_path, "description": "Optional mounted PEM CA certificate path."},
+            "provider": {"type": "string"},
+            "target_sr_cluster": {"type": "string"},
+            "identity_pool_id": {"type": "string"}
+        },
+        "x-kubernetes-validations": [
+            {
+                "rule": "self.type == 'basic' ? has(self.usernameFilePath) && has(self.passwordFilePath) : !has(self.usernameFilePath) && !has(self.passwordFilePath)",
+                "message": "usernameFilePath and passwordFilePath are required and only valid for Basic authentication"
+            },
+            {
+                "rule": "self.type == 'mtls' ? has(self.client_cert) && has(self.client_key) : !has(self.client_cert) && !has(self.client_key) && !has(self.ca_cert)",
+                "message": "client_cert and client_key are required for mTLS; these fields and ca_cert are only valid for mTLS"
+            },
+            {
+                "rule": "self.type == 'oauth' ? has(self.provider) : !has(self.provider) && !has(self.target_sr_cluster) && !has(self.identity_pool_id)",
+                "message": "provider is required for OAuth; OAuth binding fields are only valid for OAuth"
+            }
+        ]
+    })
+}
 
 pub(crate) fn registry_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
     schemars::json_schema!({"type": "object", "x-kubernetes-preserve-unknown-fields": true})
@@ -24,7 +79,7 @@ pub struct ResolvedRegistryConfig {
 
 pub(super) async fn resolve_registry(
     registry: SchemaRegistryConfig,
-    auth: Option<&SchemaRegistryAuth>,
+    auth: Option<&RegistryAuthSpec>,
     oauth: Option<&OauthSpec>,
     namespace: &str,
 ) -> Result<ResolvedRegistryConfig> {
@@ -34,7 +89,7 @@ pub(super) async fn resolve_registry(
 
 async fn resolve_registry_from_mount(
     mut registry: SchemaRegistryConfig,
-    auth: Option<&SchemaRegistryAuth>,
+    auth: Option<&RegistryAuthSpec>,
     oauth: Option<&OauthSpec>,
     root: &Path,
 ) -> Result<ResolvedRegistryConfig> {
@@ -42,9 +97,34 @@ async fn resolve_registry_from_mount(
         checked_file(root, Path::new(path)).await?;
     }
 
-    let oauth = match auth {
-        None | Some(SchemaRegistryAuth::None | SchemaRegistryAuth::Basic { .. }) => None,
-        Some(SchemaRegistryAuth::MutualTls {
+    let (auth, oauth) = match auth {
+        None => (None, None),
+        Some(RegistryAuthSpec::None) => (Some(SchemaRegistryAuth::None), None),
+        Some(RegistryAuthSpec::Basic {
+            username_file_path,
+            password_file_path,
+        }) => {
+            let username = read_credential_file(
+                root,
+                Path::new(username_file_path),
+                "Schema Registry Basic usernameFilePath",
+            )
+            .await?;
+            let password = read_credential_file(
+                root,
+                Path::new(password_file_path),
+                "Schema Registry Basic passwordFilePath",
+            )
+            .await?;
+            (
+                Some(SchemaRegistryAuth::Basic {
+                    username,
+                    password: Secret::new(password),
+                }),
+                None,
+            )
+        }
+        Some(RegistryAuthSpec::MutualTls {
             client_cert,
             client_key,
             ca_cert,
@@ -54,21 +134,26 @@ async fn resolve_registry_from_mount(
             if let Some(path) = ca_cert {
                 checked_file(root, Path::new(path)).await?;
             }
-            None
+            (
+                Some(SchemaRegistryAuth::MutualTls {
+                    client_cert: client_cert.clone(),
+                    client_key: client_key.clone(),
+                    ca_cert: ca_cert.clone(),
+                }),
+                None,
+            )
         }
-        Some(SchemaRegistryAuth::OAuth(binding)) => {
+        Some(RegistryAuthSpec::OAuth(binding)) => {
             let oauth = oauth.ok_or_else(|| {
                 Error::config("Schema Registry OAuth requires spec.oauth.providers")
             })?;
-            Some(oauth.resolve_provider(&binding.provider, root).await?)
-        }
-        Some(_) => {
-            return Err(Error::config(
-                "Unsupported Schema Registry authentication type",
-            ));
+            (
+                Some(SchemaRegistryAuth::OAuth(binding.clone())),
+                Some(oauth.resolve_provider(&binding.provider, root).await?),
+            )
         }
     };
-    registry.auth = auth.cloned();
+    registry.auth = auth;
     Ok(ResolvedRegistryConfig { registry, oauth })
 }
 
@@ -80,6 +165,49 @@ mod tests {
         oauth::{http::ClientAuth, ProviderConfig},
     };
     use serde_json::json;
+
+    #[tokio::test]
+    async fn basic_reads_mounted_credentials_and_rejects_empty_or_missing_files() {
+        let mount = tempfile::tempdir().unwrap();
+        let root = mount.path().canonicalize().unwrap();
+        let username = root.join("username");
+        let password = root.join("password");
+        let auth = serde_json::from_value(json!({
+            "type": "basic",
+            "usernameFilePath": username,
+            "passwordFilePath": password
+        }))
+        .unwrap();
+        let resolve = || {
+            resolve_registry_from_mount(
+                SchemaRegistryConfig::new("https://registry.example"),
+                Some(&auth),
+                None,
+                &root,
+            )
+        };
+        tokio::fs::write(&username, "test-user\r\n").await.unwrap();
+        assert!(resolve()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot resolve registry credential path"));
+        tokio::fs::write(&password, " \n").await.unwrap();
+        assert!(resolve()
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("passwordFilePath is empty"));
+        tokio::fs::write(&password, "test-password\n")
+            .await
+            .unwrap();
+        let resolved = resolve().await.unwrap();
+        assert!(
+            matches!(resolved.registry.auth, Some(SchemaRegistryAuth::Basic { username, password })
+            if username == "test-user" && password.expose() == "test-password")
+        );
+        assert!(resolved.oauth.is_none());
+    }
 
     #[tokio::test]
     async fn oauth_loads_the_selected_mounted_credentials_and_installs_the_binding() {
@@ -169,7 +297,7 @@ mod tests {
 
     #[tokio::test]
     async fn oauth_rejects_missing_or_undefined_providers() {
-        let auth = SchemaRegistryAuth::OAuth(
+        let auth = RegistryAuthSpec::OAuth(
             kafka_backup_core::schema_registry::SchemaRegistryOAuth::new("missing"),
         );
         let oauth = serde_json::from_value(json!({})).unwrap();
@@ -211,5 +339,37 @@ mod tests {
         assert!(error.to_string().contains(
             "Registry credential path must name a file under /etc/kafka-backup-operator/registry/default"
         ));
+    }
+
+    #[tokio::test]
+    async fn mtls_passes_validated_paths_to_core() {
+        let mount = tempfile::tempdir().unwrap();
+        let root = mount.path().canonicalize().unwrap();
+        let cert = root.join("client.crt");
+        let key = root.join("client.key");
+        let ca = root.join("ca.crt");
+        for path in [&cert, &key, &ca] {
+            tokio::fs::write(path, "").await.unwrap();
+        }
+        let auth = serde_json::from_value(json!({
+            "type": "mtls",
+            "client_cert": cert,
+            "client_key": key,
+            "ca_cert": ca
+        }))
+        .unwrap();
+        let resolved = resolve_registry_from_mount(
+            SchemaRegistryConfig::new("https://registry.example"),
+            Some(&auth),
+            None,
+            &root,
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(resolved.registry.auth, Some(SchemaRegistryAuth::MutualTls {
+            client_cert, client_key, ca_cert: Some(ca_cert),
+        }) if Path::new(&client_cert) == cert && Path::new(&client_key) == key && Path::new(&ca_cert) == ca)
+        );
     }
 }

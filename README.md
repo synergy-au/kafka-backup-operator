@@ -458,15 +458,31 @@ Confluent fields `target_sr_cluster` and `identity_pool_id` stay in `auth`.
 Replace `data` with the namespace of the backup or restore. Use the chart's
 `extraVolumes` and `extraVolumeMounts` to mount the credential directory
 read-only into the operator pod. OAuth credential paths and optional `caCert`,
-`tls.ca_cert`, and the CA and keypair paths in `auth: {type: mtls, ...}` must
+`tls.ca_cert`, and the Basic and mTLS credential paths must
 point to files under `/etc/kafka-backup-operator/registry/<resource-namespace>/`.
 This configuration provides OIDC client credentials for the registry, not
 authentication to Kafka brokers.
 
 Grant write access to these resources only to principals trusted to use the
 mounted credentials and configure their destinations. Restrict operator egress
-to approved registries and identity providers. If using `auth: {type: basic, ...}`,
-its `username` and `password` are inline and visible to anyone who can read the resource.
+to approved registries and identity providers.
+
+For Basic authentication, mount both credentials and configure their paths in
+`spec.schemaRegistry.auth` on either `KafkaBackup` or `KafkaRestore`:
+
+```yaml
+schemaRegistry:
+  url: https://registry.example
+  auth:
+    type: basic
+    usernameFilePath: /etc/kafka-backup-operator/registry/data/registry-username
+    passwordFilePath: /etc/kafka-backup-operator/registry/data/registry-password
+```
+
+Replace existing inline `username` and `password` fields with these paths and
+apply the updated CRDs before using the new fields. For `type: mtls`, keep
+using `client_cert` and `client_key` (and optionally `ca_cert`); each must point
+to a mounted PEM file, not contain inline PEM.
 
 ### Backup to Azure Blob Storage (with Workload Identity)
 

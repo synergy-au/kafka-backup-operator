@@ -34,10 +34,14 @@ impl OauthSpec {
             ))
         })?;
         let client_id =
-            read_credential_file(root, &spec.client_id_file_path, "clientIdFilePath").await?;
+            read_credential_file(root, &spec.client_id_file_path, "OAuth clientIdFilePath").await?;
         let client_secret = Secret::new(
-            read_credential_file(root, &spec.client_secret_file_path, "clientSecretFilePath")
-                .await?,
+            read_credential_file(
+                root,
+                &spec.client_secret_file_path,
+                "OAuth clientSecretFilePath",
+            )
+            .await?,
         );
         let ca_cert = match spec.ca_cert.as_deref() {
             Some(path) => Some(checked_file(root, path).await?),
@@ -108,14 +112,14 @@ pub struct OperatorOidcProviderConfig {
     pub allow_insecure_http: bool,
 }
 
-async fn read_credential_file(root: &Path, path: &Path, field: &str) -> Result<String> {
+pub(super) async fn read_credential_file(root: &Path, path: &Path, field: &str) -> Result<String> {
     let path = checked_file(root, path).await?;
     let mut value = tokio::fs::read_to_string(path)
         .await
-        .map_err(|e| Error::config(format!("Cannot read OAuth {field}: {e}")))?;
+        .map_err(|e| Error::config(format!("Cannot read {field}: {e}")))?;
     value.truncate(value.trim_end_matches(['\r', '\n']).len());
     if value.trim().is_empty() {
-        return Err(Error::config(format!("OAuth {field} is empty")));
+        return Err(Error::config(format!("{field} is empty")));
     }
     Ok(value)
 }

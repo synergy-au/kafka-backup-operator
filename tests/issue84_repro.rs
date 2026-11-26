@@ -170,11 +170,10 @@ async fn backup_and_restore_resolve_oauth_providers_from_spec() {
 }
 
 #[tokio::test]
-async fn schema_registry_backup_options_and_basic_auth_reach_core() {
+async fn schema_registry_backup_options_reach_core() {
     let resolved = resolved_backup(json!({
         "schemaRegistry": {
             "url": "https://registry.example",
-            "auth": {"type": "basic", "username": "api-key", "password": "test-password"},
             "connection": {"timeout_ms": 2000},
             "backupOptions": {"subjects": ["orders-*"], "snapshot_interval": "42s"}
         }
@@ -191,12 +190,27 @@ async fn schema_registry_backup_options_and_basic_auth_reach_core() {
             .as_secs(),
         42
     );
-    assert!(matches!(
-        registry.auth,
-        Some(kafka_backup_core::schema_registry::SchemaRegistryAuth::Basic { username, password })
-            if username == "api-key" && password.expose() == "test-password"
-    ));
     assert!(config.oauth.is_none());
+}
+
+#[test]
+fn schema_registry_basic_auth_requires_file_fields_in_both_crds() {
+    let mut spec = json!({"schemaRegistry": {
+        "url": "https://registry.example",
+        "auth": {"type": "basic", "usernameFilePath": "/mount/user", "passwordFilePath": "/mount/password"}
+    }});
+    assert!(backup_spec(spec.clone()).is_ok());
+    assert!(restore_spec(spec.clone()).is_ok());
+    for field in ["username", "password"] {
+        let mut inline = spec.clone();
+        inline["schemaRegistry"]["auth"][field] = json!("inline");
+        assert!(backup_spec(inline.clone()).is_err());
+        assert!(restore_spec(inline).is_err());
+    }
+    spec["schemaRegistry"]["auth"] =
+        json!({"type": "basic", "username": "inline", "password": "inline"});
+    assert!(backup_spec(spec.clone()).is_err());
+    assert!(restore_spec(spec).is_err());
 }
 
 #[tokio::test]

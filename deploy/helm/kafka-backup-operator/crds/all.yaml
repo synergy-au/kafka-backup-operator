@@ -470,8 +470,54 @@ spec:
                 properties:
                   auth:
                     description: "How to authenticate. Default: no authentication."
+                    properties:
+                      ca_cert:
+                        description: Optional mounted PEM CA certificate path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      client_cert:
+                        description: Mounted PEM client certificate path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      client_key:
+                        description: Mounted PEM client private key path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      identity_pool_id:
+                        type: string
+                      passwordFilePath:
+                        description: Mounted file containing the Basic password.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      provider:
+                        type: string
+                      target_sr_cluster:
+                        type: string
+                      type:
+                        enum:
+                        - none
+                        - basic
+                        - mtls
+                        - oauth
+                        type: string
+                      usernameFilePath:
+                        description: Mounted file containing the Basic username.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                    required:
+                    - type
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
+                    x-kubernetes-validations:
+                    - message: >-
+                        usernameFilePath and passwordFilePath are required and only valid for Basic
+                        authentication
+                      rule: "self.type == 'basic' ? has(self.usernameFilePath) && has(self.passwordFilePath) : !has(self.usernameFilePath) && !has(self.passwordFilePath)"
+                    - message: >-
+                        client_cert and client_key are required for mTLS; these fields and ca_cert are
+                        only valid for mTLS
+                      rule: "self.type == 'mtls' ? has(self.client_cert) && has(self.client_key) : !has(self.client_cert) && !has(self.client_key) && !has(self.ca_cert)"
+                    - message: provider is required for OAuth; OAuth binding fields are only valid for OAuth
+                      rule: "self.type == 'oauth' ? has(self.provider) : !has(self.provider) && !has(self.target_sr_cluster) && !has(self.identity_pool_id)"
                   backupOptions:
                     description: What a backup captures.
                     type: object
@@ -1636,8 +1682,54 @@ spec:
                 properties:
                   auth:
                     description: "How to authenticate. Default: no authentication."
+                    properties:
+                      ca_cert:
+                        description: Optional mounted PEM CA certificate path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      client_cert:
+                        description: Mounted PEM client certificate path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      client_key:
+                        description: Mounted PEM client private key path.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      identity_pool_id:
+                        type: string
+                      passwordFilePath:
+                        description: Mounted file containing the Basic password.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                      provider:
+                        type: string
+                      target_sr_cluster:
+                        type: string
+                      type:
+                        enum:
+                        - none
+                        - basic
+                        - mtls
+                        - oauth
+                        type: string
+                      usernameFilePath:
+                        description: Mounted file containing the Basic username.
+                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        type: string
+                    required:
+                    - type
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
+                    x-kubernetes-validations:
+                    - message: >-
+                        usernameFilePath and passwordFilePath are required and only valid for Basic
+                        authentication
+                      rule: "self.type == 'basic' ? has(self.usernameFilePath) && has(self.passwordFilePath) : !has(self.usernameFilePath) && !has(self.passwordFilePath)"
+                    - message: >-
+                        client_cert and client_key are required for mTLS; these fields and ca_cert are
+                        only valid for mTLS
+                      rule: "self.type == 'mtls' ? has(self.client_cert) && has(self.client_key) : !has(self.client_cert) && !has(self.client_key) && !has(self.ca_cert)"
+                    - message: provider is required for OAuth; OAuth binding fields are only valid for OAuth
+                      rule: "self.type == 'oauth' ? has(self.provider) : !has(self.provider) && !has(self.target_sr_cluster) && !has(self.identity_pool_id)"
                   connection:
                     description: Timeouts, retries and the rate limit.
                     type: object

@@ -105,10 +105,36 @@ fn generated_crd_schemas_avoid_unsupported_kubernetes_keywords() {
             .unwrap();
         let spec = &crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
             ["properties"];
-        for field in ["auth", "tls", "connection", options] {
+        for field in ["tls", "connection", options] {
             let schema = &spec["schemaRegistry"]["properties"][field];
             assert_eq!(schema["type"], "object", "{kind}.{field}");
             assert_eq!(schema["x-kubernetes-preserve-unknown-fields"], true);
+        }
+        let auth = &spec["schemaRegistry"]["properties"]["auth"];
+        assert_eq!(auth["type"], "object");
+        assert!(auth["x-kubernetes-preserve-unknown-fields"].is_null());
+        for (kind, fields) in [
+            ("basic", ["usernameFilePath", "passwordFilePath"]),
+            ("mtls", ["client_cert", "client_key"]),
+        ] {
+            let rule = auth["x-kubernetes-validations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|validation| validation["rule"].as_str())
+                .find(|rule| rule.starts_with(&format!("self.type == '{kind}' ?")))
+                .unwrap();
+            assert!(rule.contains(&format!(
+                "? has(self.{}) && has(self.{})",
+                fields[0], fields[1]
+            )));
+            for field in fields {
+                assert_eq!(auth["properties"][field]["type"], "string");
+                assert!(auth["properties"][field]["pattern"].is_string());
+            }
+        }
+        for field in ["username", "password"] {
+            assert!(auth["properties"].get(field).is_none());
         }
         let oauth = &spec["oauth"]["properties"];
         let cache = &oauth["cache"];
