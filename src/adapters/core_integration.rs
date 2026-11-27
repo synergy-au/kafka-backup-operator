@@ -269,7 +269,7 @@ pub fn to_core_security_config_with_tls(
         sasl_keytab_path: None,
         sasl_krb5_config_path: None,
         sasl_mechanism_plugin_factory: None,
-        oauth: None,
+        oauth: resolved.oauth.as_ref().map(|oauth| (&oauth.binding).into()),
     }
 }
 

@@ -9,7 +9,7 @@ use crate::adapters::convert_struct_to_crd_json_schema;
 use crate::{Error, Result};
 use kafka_backup_core::oauth::{
     config::normalise_pool_list, framing::validate_extension, http::ClientAuth, CacheConfig,
-    OauthConfig, OidcProviderConfig, ProviderConfig, Secret,
+    ClusterBinding, OauthConfig, OidcProviderConfig, ProviderConfig, SaslExtensions, Secret,
 };
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,18 @@ pub struct OauthClusterBinding {
     /// RFC 7628 SASL extensions sent with the token.
     #[serde(default)]
     pub extensions: OauthSaslExtensions,
+}
+
+impl From<&OauthClusterBinding> for ClusterBinding {
+    fn from(binding: &OauthClusterBinding) -> Self {
+        Self {
+            provider: binding.provider.clone(),
+            extensions: SaslExtensions {
+                logical_cluster: binding.extensions.logical_cluster.clone(),
+                identity_pool_id: binding.extensions.identity_pool_id.clone(),
+            },
+        }
+    }
 }
 
 /// The SASL extensions Confluent Cloud understands. Both are optional.
