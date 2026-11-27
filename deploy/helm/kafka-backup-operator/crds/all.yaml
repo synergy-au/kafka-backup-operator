@@ -232,6 +232,13 @@ spec:
                         description: Enable TCP_NODELAY
                         type: boolean
                     type: object
+                  oauth:
+                    description: |-
+                      Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+                      with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -256,7 +263,7 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -473,21 +480,21 @@ spec:
                     properties:
                       ca_cert:
                         description: Optional mounted PEM CA certificate path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       client_cert:
                         description: Mounted PEM client certificate path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       client_key:
                         description: Mounted PEM client private key path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       identity_pool_id:
                         type: string
                       passwordFilePath:
                         description: Mounted file containing the Basic password.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       provider:
                         type: string
@@ -502,7 +509,7 @@ spec:
                         type: string
                       usernameFilePath:
                         description: Mounted file containing the Basic username.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                     required:
                     - type
@@ -1399,6 +1406,13 @@ spec:
                         description: Enable TCP_NODELAY
                         type: boolean
                     type: object
+                  oauth:
+                    description: |-
+                      Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+                      with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -1423,7 +1437,7 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -1685,21 +1699,21 @@ spec:
                     properties:
                       ca_cert:
                         description: Optional mounted PEM CA certificate path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       client_cert:
                         description: Mounted PEM client certificate path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       client_key:
                         description: Mounted PEM client private key path.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       identity_pool_id:
                         type: string
                       passwordFilePath:
                         description: Mounted file containing the Basic password.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                       provider:
                         type: string
@@ -1714,7 +1728,7 @@ spec:
                         type: string
                       usernameFilePath:
                         description: Mounted file containing the Basic username.
-                        pattern: ^/etc/kafka-backup-operator/registry/[^/]+/.+
+                        pattern: ^/[^/]+/.+
                         type: string
                     required:
                     - type
@@ -2039,6 +2053,13 @@ spec:
                         description: Enable TCP_NODELAY
                         type: boolean
                     type: object
+                  oauth:
+                    description: |-
+                      Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+                      with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -2063,7 +2084,7 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -2393,6 +2414,13 @@ spec:
                         description: Enable TCP_NODELAY
                         type: boolean
                     type: object
+                  oauth:
+                    description: |-
+                      Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+                      with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -2417,7 +2445,7 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -3296,6 +3324,13 @@ spec:
                         description: Enable TCP_NODELAY
                         type: boolean
                     type: object
+                  oauth:
+                    description: |-
+                      Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+                      with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -3320,7 +3355,7 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference

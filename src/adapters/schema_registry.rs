@@ -35,7 +35,8 @@ pub enum RegistryAuthSpec {
 }
 
 pub(crate) fn registry_auth_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    let mounted_path = "^/etc/kafka-backup-operator/registry/[^/]+/.+";
+    // Enforce that mounted file paths have at least two path components (e.g., /<namespace>/<file>)
+    let mounted_path = "^/[^/]+/.+";
     schemars::json_schema!({
         "type": "object",
         "required": ["type"],
