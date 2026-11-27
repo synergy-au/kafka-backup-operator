@@ -498,21 +498,21 @@ spec:
                     properties:
                       ca_cert:
                         description: Optional mounted PEM CA certificate path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       client_cert:
                         description: Mounted PEM client certificate path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       client_key:
                         description: Mounted PEM client private key path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       identity_pool_id:
                         type: string
                       passwordFilePath:
                         description: Mounted file containing the Basic password.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       provider:
                         type: string
@@ -527,7 +527,7 @@ spec:
                         type: string
                       usernameFilePath:
                         description: Mounted file containing the Basic username.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                     required:
                     - type
@@ -1735,21 +1735,21 @@ spec:
                     properties:
                       ca_cert:
                         description: Optional mounted PEM CA certificate path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       client_cert:
                         description: Mounted PEM client certificate path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       client_key:
                         description: Mounted PEM client private key path.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       identity_pool_id:
                         type: string
                       passwordFilePath:
                         description: Mounted file containing the Basic password.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                       provider:
                         type: string
@@ -1764,7 +1764,7 @@ spec:
                         type: string
                       usernameFilePath:
                         description: Mounted file containing the Basic username.
-                        pattern: ^/[^/]+/.+
+                        pattern: ^/.+
                         type: string
                     required:
                     - type

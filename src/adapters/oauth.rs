@@ -2,7 +2,7 @@
 
 use std::{
     collections::BTreeMap,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use crate::adapters::convert_struct_to_crd_json_schema;
@@ -110,31 +110,22 @@ pub(crate) fn broker_oauth_schema(_: &mut schemars::SchemaGenerator) -> Schema {
     })
 }
 
-pub(super) fn credential_root(namespace: &str) -> PathBuf {
-    Path::new("/etc/kafka-backup-operator/registry").join(namespace)
-}
-
 impl OauthSpec {
-    pub(super) async fn resolve_provider(&self, name: &str, root: &Path) -> Result<OauthConfig> {
+    pub(super) async fn resolve_provider(&self, name: &str) -> Result<OauthConfig> {
         let spec = self.providers.get(name).ok_or_else(|| {
             Error::config(format!(
                 "OAuth provider '{name}' is not defined in spec.oauth.providers"
             ))
         })?;
         let client_id =
-            read_credential_file(root, &spec.client_id_file_path, "OAuth clientIdFilePath").await?;
+            read_credential_file(&spec.client_id_file_path, "OAuth clientIdFilePath").await?;
         let client_secret = Secret::new(
-            read_credential_file(
-                root,
-                &spec.client_secret_file_path,
-                "OAuth clientSecretFilePath",
-            )
-            .await?,
+            read_credential_file(&spec.client_secret_file_path, "OAuth clientSecretFilePath")
+                .await?,
         );
-        let ca_cert = match spec.ca_cert.as_deref() {
-            Some(path) => Some(checked_file(root, path).await?),
-            None => None,
-        };
+        if let Some(path) = spec.ca_cert.as_deref() {
+            validate_credential_file(path, "OAuth caCert").await?;
+        }
         let provider = ProviderConfig::OidcClientCredentials(OidcProviderConfig {
             token_endpoint_url: spec.token_endpoint_url.clone(),
             issuer: spec.issuer.clone(),
@@ -144,7 +135,7 @@ impl OauthSpec {
             scope: spec.scope.clone(),
             audience: spec.audience.clone(),
             extra_params: spec.extra_params.clone(),
-            ca_cert,
+            ca_cert: spec.ca_cert.clone(),
             allow_insecure_http: spec.allow_insecure_http,
         });
         Ok(OauthConfig {
@@ -200,8 +191,8 @@ pub struct OperatorOidcProviderConfig {
     pub allow_insecure_http: bool,
 }
 
-pub(super) async fn read_credential_file(root: &Path, path: &Path, field: &str) -> Result<String> {
-    let path = checked_file(root, path).await?;
+pub(super) async fn read_credential_file(path: &Path, field: &str) -> Result<String> {
+    validate_credential_file(path, field).await?;
     let mut value = tokio::fs::read_to_string(path)
         .await
         .map_err(|e| Error::config(format!("Cannot read {field}: {e}")))?;
@@ -212,30 +203,21 @@ pub(super) async fn read_credential_file(root: &Path, path: &Path, field: &str) 
     Ok(value)
 }
 
-/// Validates a mounted file and returns its original path.
-pub(super) async fn checked_file(root: &Path, path: &Path) -> Result<PathBuf> {
-    let invalid = || {
-        Error::config(format!(
-            "Registry credential path must name a file under {}",
-            root.display()
-        ))
-    };
-    let relative = path.strip_prefix(root).map_err(|_| invalid())?;
-    if relative.as_os_str().is_empty()
-        || !relative
-            .components()
-            .all(|c| matches!(c, Component::Normal(_)))
-    {
-        return Err(invalid());
+pub(super) async fn validate_credential_file(path: &Path, field: &str) -> Result<()> {
+    if !path.is_absolute() {
+        return Err(Error::config(format!(
+            "{field} must be an absolute file path"
+        )));
     }
-    let canonical = tokio::fs::canonicalize(path)
+    let metadata = tokio::fs::metadata(path)
         .await
-        .map_err(|e| Error::config(format!("Cannot resolve registry credential path: {e}")))?;
-    if !canonical.starts_with(root) || !tokio::fs::metadata(&canonical).await?.is_file() {
-        return Err(invalid());
+        .map_err(|e| Error::config(format!("Cannot access {field}: {e}")))?;
+    if !metadata.is_file() {
+        return Err(Error::config(format!(
+            "{field} must point to a regular file"
+        )));
     }
-    // Keep the mounted path so providers that refresh tokens see Secret volume rotations.
-    Ok(path.to_owned())
+    Ok(())
 }
 
 #[cfg(all(test, unix))]
@@ -272,7 +254,7 @@ mod tests {
             .await
             .unwrap();
 
-        let resolved = oauth.resolve_provider("registry", &root).await.unwrap();
+        let resolved = oauth.resolve_provider("registry").await.unwrap();
         assert_eq!(resolved.providers.len(), 1);
         let Some(ProviderConfig::OidcClientCredentials(provider)) =
             resolved.providers.get("registry")
@@ -289,7 +271,7 @@ mod tests {
             (&client_secret, "clientSecretFilePath", "test-secret\n"),
         ] {
             tokio::fs::write(path, " \r\n").await.unwrap();
-            let error = oauth.resolve_provider("registry", &root).await.unwrap_err();
+            let error = oauth.resolve_provider("registry").await.unwrap_err();
             assert!(error
                 .to_string()
                 .contains(&format!("OAuth {field} is empty")));
@@ -299,16 +281,19 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn projected_secret_paths_stay_inside_the_namespace_mount() {
+    async fn configured_absolute_paths_can_follow_projected_secret_symlinks() {
         let mount = tempfile::tempdir().unwrap();
-        let root = mount.path().canonicalize().unwrap().join("namespace");
+        let root = mount.path().join("credentials");
         std::fs::create_dir(&root).unwrap();
-        std::fs::write(root.join("current"), "test").unwrap();
-        std::fs::write(root.join("../outside"), "test").unwrap();
+        std::fs::write(mount.path().join("current"), "test\n").unwrap();
         let projected = root.join("projected");
-        std::os::unix::fs::symlink("current", &projected).unwrap();
-        assert_eq!(checked_file(&root, &projected).await.unwrap(), projected);
-        std::os::unix::fs::symlink("../outside", root.join("escape")).unwrap();
-        assert!(checked_file(&root, &root.join("escape")).await.is_err());
+        std::os::unix::fs::symlink("../current", &projected).unwrap();
+        assert_eq!(
+            read_credential_file(&projected, "credential")
+                .await
+                .unwrap(),
+            "test"
+        );
+        assert!(validate_credential_file(&root, "credential").await.is_err());
     }
 }

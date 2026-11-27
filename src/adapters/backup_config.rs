@@ -4,7 +4,6 @@
 
 use kafka_backup_core::{oauth::OauthConfig, schema_registry::SchemaRegistryConfig};
 use kube::Client;
-use std::path::Path;
 
 use crate::crd::{
     CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaBackupSpec, KafkaClusterSpec,
@@ -12,7 +11,7 @@ use crate::crd::{
 };
 use crate::error::{Error, Result};
 
-use super::oauth::{credential_root, OauthClusterBinding, OauthSpec};
+use super::oauth::{OauthClusterBinding, OauthSpec};
 use super::schema_registry::{resolve_registry, ResolvedRegistryConfig};
 use super::secrets::{get_sasl_credentials, get_tls_credentials_split, TlsCredentials};
 use super::storage_config::{build_storage_config, ResolvedStorage};
@@ -155,7 +154,6 @@ pub struct ResolvedBackupOptionsConfig {
 
 pub(crate) async fn resolve_backup_registry(
     spec: &KafkaBackupSpec,
-    namespace: &str,
 ) -> Result<Option<ResolvedRegistryConfig>> {
     let Some(section) = spec.schema_registry.as_ref().filter(|s| s.enabled) else {
         return Ok(None);
@@ -173,14 +171,9 @@ pub(crate) async fn resolve_backup_registry(
             "Schema Registry snapshot_interval must be greater than zero",
         ));
     }
-    resolve_registry(
-        registry,
-        section.auth.as_ref(),
-        spec.oauth.as_ref(),
-        namespace,
-    )
-    .await
-    .map(Some)
+    resolve_registry(registry, section.auth.as_ref(), spec.oauth.as_ref())
+        .await
+        .map(Some)
 }
 
 /// Build fully resolved backup configuration from CRD
@@ -198,7 +191,7 @@ pub async fn build_backup_config(
     )
     .await?;
 
-    let schema_registry = resolve_backup_registry(&backup.spec, namespace).await?;
+    let schema_registry = resolve_backup_registry(&backup.spec).await?;
 
     // Resolve storage configuration
     let storage = build_storage_config(&backup.spec.storage, client, namespace).await?;
@@ -317,23 +310,12 @@ pub async fn build_kafka_config(
     client: &Client,
     namespace: &str,
 ) -> Result<ResolvedKafkaConfig> {
-    build_kafka_config_from_mount(kafka, oauth, client, namespace, &credential_root(namespace))
-        .await
-}
-
-async fn build_kafka_config_from_mount(
-    kafka: &KafkaClusterSpec,
-    oauth: Option<&OauthSpec>,
-    client: &Client,
-    namespace: &str,
-    root: &Path,
-) -> Result<ResolvedKafkaConfig> {
     validate_kafka_auth(kafka, oauth)?;
     let oauth = match (&kafka.oauth, oauth) {
         (Some(binding), Some(spec)) => Some(ResolvedBrokerOauth {
             binding: binding.clone(),
             config: spec
-                .resolve_provider(&binding.provider, root)
+                .resolve_provider(&binding.provider)
                 .await
                 .map_err(|err| Error::config(format!("spec.kafkaCluster.oauth: {err}")))?,
         }),
@@ -476,6 +458,7 @@ mod broker_oauth_tests {
         schema_registry::{SchemaRegistryAuth, SchemaRegistryOAuth},
     };
     use serde_json::{json, Value};
+    use std::path::Path;
 
     fn cluster(protocol: &str) -> Value {
         json!({
@@ -589,10 +572,9 @@ mod broker_oauth_tests {
         let oauth_json = providers(&mount);
         let oauth: OauthSpec = serde_json::from_value(oauth_json.clone()).unwrap();
         let broker_spec = serde_json::from_value(broker.clone()).unwrap();
-        let error =
-            build_kafka_config_from_mount(&broker_spec, Some(&oauth), &client, "test", &mount)
-                .await
-                .unwrap_err();
+        let error = build_kafka_config(&broker_spec, Some(&oauth), &client, "test")
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("spec.kafkaCluster.oauth"));
         tokio::fs::write(mount.join("id"), "mounted-client\n")
             .await
@@ -600,12 +582,7 @@ mod broker_oauth_tests {
         tokio::fs::write(mount.join("secret"), "mounted-secret\n")
             .await
             .unwrap();
-        let resolved =
-            build_kafka_config_from_mount(&broker_spec, Some(&oauth), &client, "test", &mount)
-                .await
-                .unwrap();
-
-        let mut backup = KafkaBackup::new("test", serde_json::from_value(json!({
+        let backup = KafkaBackup::new("test", serde_json::from_value(json!({
             "kafkaCluster": broker, "oauth": oauth_json, "topics": ["orders"], "storage": storage
         })).unwrap());
         let restore = KafkaRestore::new(
@@ -629,28 +606,7 @@ mod broker_oauth_tests {
         }))
         .unwrap();
 
-        // Production adapters must use the binding and spec.oauth, and refuse files
-        // outside the real mount. Use our temporary mount for successful handoffs.
-        for error in [
-            build_backup_config(&backup, &client, "test")
-                .await
-                .unwrap_err(),
-            build_restore_config(&restore, &client, "test")
-                .await
-                .unwrap_err(),
-            build_validation_config(&validation, &client, "test")
-                .await
-                .unwrap_err(),
-        ] {
-            assert!(
-                error.to_string().contains("spec.kafkaCluster.oauth"),
-                "{error}"
-            );
-        }
-        backup.spec.kafka_cluster.oauth = None;
-        backup.spec.kafka_cluster.security_protocol = "PLAINTEXT".into();
-        let mut backup = build_backup_config(&backup, &client, "test").await.unwrap();
-        backup.kafka = resolved.clone();
+        let backup = build_backup_config(&backup, &client, "test").await.unwrap();
         let core = to_core_backup_config(&backup, "test", None).unwrap();
         assert_installed(core.source.as_ref().unwrap());
         let config = core.oauth.unwrap();
@@ -662,22 +618,9 @@ mod broker_oauth_tests {
         assert_eq!(provider.client_secret.expose(), "mounted-secret");
         assert_eq!(config.cache.refresh_fraction, Some(0.75));
 
-        let mut restore = restore;
-        let kafka = build_kafka_config_from_mount(
-            &restore.spec.kafka_cluster,
-            restore.spec.oauth.as_ref(),
-            &client,
-            "test",
-            &mount,
-        )
-        .await
-        .unwrap();
-        restore.spec.kafka_cluster.oauth = None;
-        restore.spec.kafka_cluster.security_protocol = "PLAINTEXT".into();
         let mut restore = build_restore_config(&restore, &client, "test")
             .await
             .unwrap();
-        restore.kafka = kafka;
         for provider in ["broker", "registry"] {
             let mut registry = SchemaRegistryConfig::new("https://registry.example");
             registry.auth = Some(SchemaRegistryAuth::OAuth(SchemaRegistryOAuth::new(
@@ -685,7 +628,7 @@ mod broker_oauth_tests {
             )));
             restore.schema_registry = Some(ResolvedRegistryConfig {
                 registry,
-                oauth: Some(oauth.resolve_provider(provider, &mount).await.unwrap()),
+                oauth: Some(oauth.resolve_provider(provider).await.unwrap()),
             });
             let core = to_core_restore_config(&restore, "test", &backup.storage, None).unwrap();
             assert_installed(core.target.as_ref().unwrap());
@@ -701,22 +644,18 @@ mod broker_oauth_tests {
             assert!(binding.token_source.is_some());
         }
 
-        let mut validation = validation;
-        validation.spec.kafka_cluster = None;
-        let mut validation = build_validation_config(&validation, &client, "test")
+        let validation = build_validation_config(&validation, &client, "test")
             .await
             .unwrap();
-        validation.kafka = Some(resolved);
         let core = to_core_validation_config(&validation, "test", &backup.storage, None).unwrap();
         assert_installed(&core.target);
         for (cluster, oauth, topics) in [
             (reset.kafka_cluster, reset.oauth, reset.topics),
             (rollback.kafka_cluster, rollback.oauth, vec![]),
         ] {
-            let resolved =
-                build_kafka_config_from_mount(&cluster, oauth.as_ref(), &client, "test", &mount)
-                    .await
-                    .unwrap();
+            let resolved = build_kafka_config(&cluster, oauth.as_ref(), &client, "test")
+                .await
+                .unwrap();
             let core = to_core_target_kafka_config(&resolved, &topics, None).unwrap();
             assert_installed(&core);
             assert_eq!(core.topics.include, topics);

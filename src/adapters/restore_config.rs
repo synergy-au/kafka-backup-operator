@@ -131,7 +131,6 @@ pub fn restore_is_dry_run(spec: &KafkaRestoreSpec) -> bool {
 
 pub(crate) async fn resolve_restore_registry(
     spec: &KafkaRestoreSpec,
-    namespace: &str,
 ) -> Result<Option<ResolvedRegistryConfig>> {
     let Some(section) = spec.schema_registry.as_ref().filter(|s| s.enabled) else {
         return Ok(None);
@@ -140,14 +139,9 @@ pub(crate) async fn resolve_restore_registry(
     registry.tls = section.tls.clone();
     registry.connection = section.connection.clone();
     registry.restore = section.restore_options.clone();
-    resolve_registry(
-        registry,
-        section.auth.as_ref(),
-        spec.oauth.as_ref(),
-        namespace,
-    )
-    .await
-    .map(Some)
+    resolve_registry(registry, section.auth.as_ref(), spec.oauth.as_ref())
+        .await
+        .map(Some)
 }
 
 /// Build fully resolved restore configuration from CRD
@@ -167,7 +161,7 @@ pub async fn build_restore_config(
         namespace,
     )
     .await?;
-    let schema_registry = resolve_restore_registry(&restore.spec, namespace).await?;
+    let schema_registry = resolve_restore_registry(&restore.spec).await?;
 
     // Build PITR config
     let pitr = restore.spec.pitr.as_ref().map(build_pitr_config);

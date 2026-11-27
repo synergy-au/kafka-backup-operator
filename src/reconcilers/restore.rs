@@ -371,7 +371,7 @@ async fn execute_dry_run(
             .map_err(|e| Error::config(e.to_string()))?;
     }
 
-    if let Some(resolved) = resolve_restore_registry(&restore.spec, namespace).await? {
+    if let Some(resolved) = resolve_restore_registry(&restore.spec).await? {
         resolved
             .registry
             .validate()

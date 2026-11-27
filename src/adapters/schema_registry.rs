@@ -10,7 +10,7 @@ use kafka_backup_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::oauth::{checked_file, credential_root, read_credential_file, OauthSpec};
+use super::oauth::{read_credential_file, validate_credential_file, OauthSpec};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,8 +35,7 @@ pub enum RegistryAuthSpec {
 }
 
 pub(crate) fn registry_auth_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    // Enforce that mounted file paths have at least two path components (e.g., /<namespace>/<file>)
-    let mounted_path = "^/[^/]+/.+";
+    let mounted_path = "^/.+";
     schemars::json_schema!({
         "type": "object",
         "required": ["type"],
@@ -75,23 +74,12 @@ pub struct ResolvedRegistryConfig {
 }
 
 pub(super) async fn resolve_registry(
-    registry: SchemaRegistryConfig,
-    auth: Option<&RegistryAuthSpec>,
-    oauth: Option<&OauthSpec>,
-    namespace: &str,
-) -> Result<ResolvedRegistryConfig> {
-    let root = credential_root(namespace);
-    resolve_registry_from_mount(registry, auth, oauth, &root).await
-}
-
-async fn resolve_registry_from_mount(
     mut registry: SchemaRegistryConfig,
     auth: Option<&RegistryAuthSpec>,
     oauth: Option<&OauthSpec>,
-    root: &Path,
 ) -> Result<ResolvedRegistryConfig> {
     if let Some(path) = registry.tls.as_ref().and_then(|tls| tls.ca_cert.as_deref()) {
-        checked_file(root, Path::new(path)).await?;
+        validate_credential_file(Path::new(path), "Schema Registry tls.ca_cert").await?;
     }
 
     let (auth, oauth) = match auth {
@@ -102,13 +90,11 @@ async fn resolve_registry_from_mount(
             password_file_path,
         }) => {
             let username = read_credential_file(
-                root,
                 Path::new(username_file_path),
                 "Schema Registry Basic usernameFilePath",
             )
             .await?;
             let password = read_credential_file(
-                root,
                 Path::new(password_file_path),
                 "Schema Registry Basic passwordFilePath",
             )
@@ -126,10 +112,12 @@ async fn resolve_registry_from_mount(
             client_key,
             ca_cert,
         }) => {
-            checked_file(root, Path::new(client_cert)).await?;
-            checked_file(root, Path::new(client_key)).await?;
+            validate_credential_file(Path::new(client_cert), "Schema Registry auth.client_cert")
+                .await?;
+            validate_credential_file(Path::new(client_key), "Schema Registry auth.client_key")
+                .await?;
             if let Some(path) = ca_cert {
-                checked_file(root, Path::new(path)).await?;
+                validate_credential_file(Path::new(path), "Schema Registry auth.ca_cert").await?;
             }
             (
                 Some(SchemaRegistryAuth::MutualTls {
@@ -146,7 +134,7 @@ async fn resolve_registry_from_mount(
             })?;
             (
                 Some(SchemaRegistryAuth::OAuth(binding.clone())),
-                Some(oauth.resolve_provider(&binding.provider, root).await?),
+                Some(oauth.resolve_provider(&binding.provider).await?),
             )
         }
     };
@@ -176,11 +164,10 @@ mod tests {
         }))
         .unwrap();
         let resolve = || {
-            resolve_registry_from_mount(
+            resolve_registry(
                 SchemaRegistryConfig::new("https://registry.example"),
                 Some(&auth),
                 None,
-                &root,
             )
         };
         tokio::fs::write(&username, "test-user\r\n").await.unwrap();
@@ -188,7 +175,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string()
-            .contains("Cannot resolve registry credential path"));
+            .contains("Cannot access Schema Registry Basic passwordFilePath"));
         tokio::fs::write(&password, " \n").await.unwrap();
         assert!(resolve()
             .await
@@ -244,11 +231,10 @@ mod tests {
             .unwrap();
 
         let resolve = || {
-            resolve_registry_from_mount(
+            resolve_registry(
                 SchemaRegistryConfig::new("https://registry.example"),
                 Some(&auth),
                 Some(&oauth),
-                &root,
             )
         };
         let resolved = resolve().await.unwrap();
@@ -309,7 +295,6 @@ mod tests {
                 SchemaRegistryConfig::new("https://registry.example"),
                 Some(&auth),
                 spec,
-                "default",
             )
             .await
             .unwrap_err();
@@ -318,10 +303,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mtls_rejects_credentials_outside_the_namespace_mount() {
+    async fn mtls_rejects_relative_credential_paths() {
         let auth = serde_json::from_value(json!({
             "type": "mtls",
-            "client_cert": "/outside/client.crt",
+            "client_cert": "relative/client.crt",
             "client_key": "/outside/client.key"
         }))
         .unwrap();
@@ -329,13 +314,12 @@ mod tests {
             SchemaRegistryConfig::new("https://registry.example"),
             Some(&auth),
             None,
-            "default",
         )
         .await
         .unwrap_err();
-        assert!(error.to_string().contains(
-            "Registry credential path must name a file under /etc/kafka-backup-operator/registry/default"
-        ));
+        assert!(error
+            .to_string()
+            .contains("Schema Registry auth.client_cert must be an absolute file path"));
     }
 
     #[tokio::test]
@@ -355,14 +339,19 @@ mod tests {
             "ca_cert": ca
         }))
         .unwrap();
-        let resolved = resolve_registry_from_mount(
-            SchemaRegistryConfig::new("https://registry.example"),
-            Some(&auth),
-            None,
-            &root,
-        )
-        .await
-        .unwrap();
+        let mut registry = SchemaRegistryConfig::new("https://registry.example");
+        registry.tls = Some(serde_json::from_value(json!({"ca_cert": ca})).unwrap());
+        let resolved = resolve_registry(registry, Some(&auth), None).await.unwrap();
+        assert_eq!(
+            resolved
+                .registry
+                .tls
+                .unwrap()
+                .ca_cert
+                .as_deref()
+                .map(Path::new),
+            Some(ca.as_path())
+        );
         assert!(
             matches!(resolved.registry.auth, Some(SchemaRegistryAuth::MutualTls {
             client_cert, client_key, ca_cert: Some(ca_cert),

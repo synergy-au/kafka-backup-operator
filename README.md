@@ -392,138 +392,6 @@ This release aligns the operator CRDs and adapters with `kafka-backup-core` `v0.
 
 ## Configuration Examples
 
-### Kafka broker OAuth/OIDC
-
-KafkaBackup, KafkaRestore, KafkaBackupValidation, KafkaOffsetReset, and
-KafkaOffsetRollback use the same broker OAuth configuration:
-
-```yaml
-spec:
-  kafkaCluster:
-    bootstrapServers: ["broker.example.com:9092"]
-    securityProtocol: SASL_SSL
-    oauth:
-      provider: broker-oidc
-      extensions:
-        logicalCluster: lkc-example
-        identityPoolId: pool-example
-  oauth:
-    providers:
-      broker-oidc:
-        tokenEndpointUrl: https://identity.example.com/oauth2/token
-        clientIdFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-id
-        clientSecretFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-secret
-```
-
-`SASL_SSL` with an OAuth binding selects SASL/OAUTHBEARER. `OAUTHBEARER` is also
-accepted as a TLS-only alias for `SASL_SSL` and requires the binding. Do not
-combine broker OAuth with `saslSecret` or a plaintext protocol. The extensions
-are optional. Broker TLS uses public trust roots unless a custom CA is supplied
-through `caSecret` or `tlsSecret`.
-
-Use either `tokenEndpointUrl` or `issuer`. Mount both OIDC credential files
-read-only under `/etc/kafka-backup-operator/registry/<resource-namespace>/`
-(`data` in the example). A backup or restore can select different providers
-for Kafka and Schema Registry, or use the same name to share a token cache.
-Only referenced providers are resolved. Restrict resource write access to
-principals trusted to use the mounted credentials, and restrict operator egress
-to approved brokers and identity providers.
-
-Apply the updated CRDs before upgrading the operator or submitting resources
-that use these fields.
-
-### Confluent Schema Registry
-
-Apply the updated CRDs before using these fields (including when upgrading
-with Helm, which does not upgrade existing CRDs automatically). Add a
-`schemaRegistry` block under a `KafkaBackup` resource's `spec` to capture
-schemas alongside the Kafka data:
-
-```yaml
-schemaRegistry:
-  url: https://source-registry.example.com
-  connection:
-    timeout_ms: 10000
-  backupOptions:
-    subjects: ["orders-*"]
-    snapshot_interval: 15m
-    fail_on_partial: true
-```
-
-In the `KafkaRestore` resource, configure the **target** registry:
-
-```yaml
-schemaRegistry:
-  url: https://target-registry.example.com
-  restoreOptions:
-    strategy: into_existing
-    rewrite_ids: true
-```
-
-The operator restores schemas before Kafka records and stops if the registry
-restore fails. Either `spec.dryRun` or an enabled registry's
-`restoreOptions.dry_run` makes the whole restore validation-only; it does not
-preview or write to either service. Omitting `schemaRegistry` or setting
-`enabled: false` leaves the registry out of the operation. Registry options use
-the core library's snake_case keys. Continuous backups take periodic snapshots
-and a final snapshot; one-shot backups take a single snapshot. With
-`fail_on_partial: false` (default), registry snapshot failures are logged and
-do not fail an otherwise successful Kafka backup.
-
-For OAuth, select a named provider in `spec.schemaRegistry.auth` and define it
-under `spec.oauth.providers` on either resource. This example uses a Secret
-volume mounted into the operator pod for both OIDC client credentials:
-
-```yaml
-schemaRegistry:
-  url: https://target-registry.example.com
-  auth:
-    type: oauth
-    provider: registry-oidc
-oauth:
-  providers:
-    registry-oidc:
-      tokenEndpointUrl: https://identity.example.com/oauth2/token
-      clientIdFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-id
-      clientSecretFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-secret
-      scope: schema-registry
-  cache:
-    refresh_before_expiry: 1m
-```
-
-Only the selected provider is resolved. Set either `tokenEndpointUrl` or
-`issuer`; `clientAuth` defaults to `basic` and also accepts `post`. Optional
-Confluent fields `target_sr_cluster` and `identity_pool_id` stay in `auth`.
-
-Replace `data` with the namespace of the backup or restore. Use the chart's
-`extraVolumes` and `extraVolumeMounts` to mount the credential directory
-read-only into the operator pod. OAuth credential paths and optional `caCert`,
-`tls.ca_cert`, and the Basic and mTLS credential paths must
-point to files under `/etc/kafka-backup-operator/registry/<resource-namespace>/`.
-This example selects a provider only for the registry. Broker authentication
-requires its own `spec.kafkaCluster.oauth` binding.
-
-Grant write access to these resources only to principals trusted to use the
-mounted credentials and configure their destinations. Restrict operator egress
-to approved registries and identity providers.
-
-For Basic authentication, mount both credentials and configure their paths in
-`spec.schemaRegistry.auth` on either `KafkaBackup` or `KafkaRestore`:
-
-```yaml
-schemaRegistry:
-  url: https://registry.example
-  auth:
-    type: basic
-    usernameFilePath: /etc/kafka-backup-operator/registry/data/registry-username
-    passwordFilePath: /etc/kafka-backup-operator/registry/data/registry-password
-```
-
-Replace existing inline `username` and `password` fields with these paths and
-apply the updated CRDs before using the new fields. For `type: mtls`, keep
-using `client_cert` and `client_key` (and optionally `ca_cert`); each must point
-to a mounted PEM file, not contain inline PEM.
-
 ### Backup to Azure Blob Storage (with Workload Identity)
 
 ```yaml
@@ -627,6 +495,139 @@ iam.gke.io/gcp-service-account: kafka-backup@PROJECT_ID.iam.gserviceaccount.com
 ```
 
 `credentialsSecret` remains required when `useWorkloadIdentity` is false. Setting both is rejected. See [docs/gcs-workload-identity.md](docs/gcs-workload-identity.md).
+
+### Kafka broker OAuth/OIDC
+
+KafkaBackup, KafkaRestore, KafkaBackupValidation, KafkaOffsetReset, and
+KafkaOffsetRollback use the same broker OAuth configuration:
+
+```yaml
+spec:
+  kafkaCluster:
+    bootstrapServers: ["broker.example.com:9092"]
+    securityProtocol: SASL_SSL
+    oauth:
+      provider: broker-oidc
+      extensions:
+        logicalCluster: lkc-example
+        identityPoolId: pool-example
+  oauth:
+    providers:
+      broker-oidc:
+        tokenEndpointUrl: https://identity.example.com/oauth2/token
+        clientIdFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-id
+        clientSecretFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-secret
+```
+
+`SASL_SSL` with an OAuth binding selects `SASL`/`OAUTHBEARER`. `OAUTHBEARER` is also
+accepted as a TLS-only alias for `SASL_SSL` and requires the binding. Do not
+combine broker OAuth with `saslSecret` or a plaintext protocol. The extensions
+are optional. Broker TLS uses public trust roots unless a custom CA is supplied
+through `caSecret` or `tlsSecret`.
+
+Use either `tokenEndpointUrl` or `issuer`. Mount both OIDC credential files
+read-only and specify their full paths inside the operator pod. The directory
+in the example is not required. A backup or restore can select different providers
+for Kafka and Schema Registry, or use the same name to share a token cache.
+Only referenced providers are resolved. Credential paths are not restricted by
+resource namespace. Grant resource write access only to principals trusted with
+files readable by the operator, and restrict operator egress to approved brokers
+and identity providers.
+
+Apply the updated CRDs before upgrading the operator or submitting resources
+that use these fields.
+
+### Confluent Schema Registry
+
+Apply the updated CRDs before using these fields (including when upgrading
+with Helm, which does not upgrade existing CRDs automatically). Add a
+`schemaRegistry` block under a `KafkaBackup` resource's `spec` to capture
+schemas alongside the Kafka data:
+
+```yaml
+schemaRegistry:
+  url: https://source-registry.example.com
+  connection:
+    timeout_ms: 10000
+  backupOptions:
+    subjects: ["orders-*"]
+    snapshot_interval: 15m
+    fail_on_partial: true
+```
+
+In the `KafkaRestore` resource, configure the **target** registry:
+
+```yaml
+schemaRegistry:
+  url: https://target-registry.example.com
+  restoreOptions:
+    strategy: into_existing
+    rewrite_ids: true
+```
+
+The operator restores schemas before Kafka records and stops if the registry
+restore fails. Either `spec.dryRun` or an enabled registry's
+`restoreOptions.dry_run` makes the whole restore validation-only; it does not
+preview or write to either service. Omitting `schemaRegistry` or setting
+`enabled: false` leaves the registry out of the operation. Registry options use
+the core library's snake_case keys. Continuous backups take periodic snapshots
+and a final snapshot; one-shot backups take a single snapshot. With
+`fail_on_partial: false` (default), registry snapshot failures are logged and
+do not fail an otherwise successful Kafka backup.
+
+For OAuth, select a named provider in `spec.schemaRegistry.auth` and define it
+under `spec.oauth.providers` on either resource. This example uses a Secret
+volume mounted into the operator pod for both OIDC client credentials:
+
+```yaml
+schemaRegistry:
+  url: https://target-registry.example.com
+  auth:
+    type: oauth
+    provider: registry-oidc
+oauth:
+  providers:
+    registry-oidc:
+      tokenEndpointUrl: https://identity.example.com/oauth2/token
+      clientIdFilePath: /path/to/oidc-client-id
+      clientSecretFilePath: /path/to/oidc-client-secret
+      scope: schema-registry
+  cache:
+    refresh_before_expiry: 1m
+```
+
+Only the selected provider is resolved. Set either `tokenEndpointUrl` or
+`issuer`; `clientAuth` defaults to `basic` and also accepts `post`. Optional
+Confluent fields `target_sr_cluster` and `identity_pool_id` stay in `auth`.
+
+Use the chart's `extraVolumes` and `extraVolumeMounts` to mount the credential
+directory read-only into the operator pod. OAuth credential paths and optional
+`caCert`, `tls.ca_cert`, and the Basic and mTLS credential paths must be
+absolute paths inside the operator pod. The operator uses the configured path
+as-is; it does not prepend or enforce a namespace directory.
+This example selects a provider only for the registry. Broker authentication
+requires its own `spec.kafkaCluster.oauth` binding.
+
+Grant write access to these resources only to principals trusted with files
+readable by the operator and able to configure their destinations. Restrict operator egress
+to approved registries and identity providers.
+
+For Basic authentication, mount both credentials and configure their paths in
+`spec.schemaRegistry.auth` on either `KafkaBackup` or `KafkaRestore`:
+
+```yaml
+schemaRegistry:
+  url: https://registry.example
+  auth:
+    type: basic
+    usernameFilePath: /path/to/registry-username
+    passwordFilePath: /path/to/registry-password
+```
+
+Replace existing inline `username` and `password` fields with these paths and
+apply the updated CRDs before using the new fields. For `type: mtls`, keep
+using `client_cert` and `client_key` (and optionally `ca_cert`); each must point
+to a mounted PEM file, not contain inline PEM.
 
 ## Backup Retention
 

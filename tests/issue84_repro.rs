@@ -149,23 +149,33 @@ fn schema_registry_auth_rejects_oauth_provider_and_cache_settings() {
 
 #[tokio::test]
 async fn backup_and_restore_resolve_oauth_providers_from_spec() {
-    let overrides = registry_oauth_overrides();
+    let mut overrides = registry_oauth_overrides();
+    let credentials = tempfile::tempdir().unwrap();
+    let username = credentials.path().join("id");
+    let password = credentials.path().join("secret");
+    std::fs::write(&username, "test-client").unwrap();
+    std::fs::write(&password, "test-secret").unwrap();
+    let provider = &mut overrides["oauth"]["providers"]["registry"];
+    provider["clientIdFilePath"] = json!(username);
+    provider["clientSecretFilePath"] = json!(password);
     let backup = KafkaBackup::new("backup", backup_spec(overrides.clone()).unwrap());
     let restore = KafkaRestore::new("restore", restore_spec(overrides).unwrap());
     let client = test_client();
-    let backup_error = build_backup_config(&backup, &client, "default")
+    let backup = build_backup_config(&backup, &client, "default")
         .await
-        .unwrap_err();
-    let restore_error = build_restore_config(&restore, &client, "default")
+        .unwrap();
+    let restore = build_restore_config(&restore, &client, "default")
         .await
-        .unwrap_err();
-    for error in [backup_error, restore_error] {
-        assert!(
-            error.to_string().contains(
-                "Registry credential path must name a file under /etc/kafka-backup-operator/registry/default"
-            ),
-            "{error}"
-        );
+        .unwrap();
+    for registry in [backup.schema_registry, restore.schema_registry] {
+        let oauth = registry.unwrap().oauth.unwrap();
+        let kafka_backup_core::oauth::ProviderConfig::OidcClientCredentials(provider) =
+            &oauth.providers["registry"]
+        else {
+            panic!("expected OIDC credentials");
+        };
+        assert_eq!(provider.client_id, "test-client");
+        assert_eq!(provider.client_secret.expose(), "test-secret");
     }
 }
 
