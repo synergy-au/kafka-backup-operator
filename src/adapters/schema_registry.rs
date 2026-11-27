@@ -67,10 +67,6 @@ pub(crate) fn registry_auth_schema(_: &mut schemars::SchemaGenerator) -> schemar
     })
 }
 
-pub(crate) fn registry_object(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    schemars::json_schema!({"type": "object", "x-kubernetes-preserve-unknown-fields": true})
-}
-
 #[derive(Debug, Clone)]
 pub struct ResolvedRegistryConfig {
     pub registry: SchemaRegistryConfig,

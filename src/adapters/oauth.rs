@@ -5,14 +5,13 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use crate::adapters::convert_struct_to_crd_json_schema;
+use crate::{Error, Result};
 use kafka_backup_core::oauth::{
     http::ClientAuth, CacheConfig, OauthConfig, OidcProviderConfig, ProviderConfig, Secret,
 };
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
-
-use super::schema_registry::registry_object;
-use crate::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -22,7 +21,7 @@ pub struct OauthSpec {
     pub providers: BTreeMap<String, OperatorOidcProviderConfig>,
     /// Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
     #[serde(default, skip_serializing_if = "cache_is_default")]
-    #[schemars(schema_with = "registry_object")]
+    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
     pub cache: CacheConfig,
 }
 

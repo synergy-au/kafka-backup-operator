@@ -16,9 +16,15 @@ pub use core_integration::*;
 pub use evidence::*;
 pub use oauth::*;
 pub use restore_config::*;
-pub(crate) use schema_registry::{registry_auth_schema, registry_object};
+pub(crate) use schema_registry::registry_auth_schema;
 pub use schema_registry::{RegistryAuthSpec, ResolvedRegistryConfig};
 pub use secrets::*;
 pub use storage_config::*;
 pub use tls_files::*;
 pub use validation_config::*;
+
+pub(crate) fn convert_struct_to_crd_json_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    schemars::json_schema!({"type": "object", "x-kubernetes-preserve-unknown-fields": true})
+}

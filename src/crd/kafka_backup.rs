@@ -1,6 +1,7 @@
 //! KafkaBackup Custom Resource Definition
 
 use chrono::{DateTime, Utc};
+use kafka_backup_core::oauth::ClusterBinding;
 use kafka_backup_core::schema_registry::{
     SchemaBackupOptions, SchemaConnectionConfig, SchemaRegistryTls,
 };
@@ -8,7 +9,9 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{registry_auth_schema, registry_object, OauthSpec, RegistryAuthSpec};
+use crate::adapters::{registry_auth_schema, OauthSpec, RegistryAuthSpec};
+
+use crate::adapters::convert_struct_to_crd_json_schema;
 
 /// KafkaBackup resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -176,7 +179,7 @@ pub struct KafkaClusterSpec {
     /// Bootstrap servers
     pub bootstrap_servers: Vec<String>,
 
-    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL)
+    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
     #[serde(default = "default_security_protocol")]
     pub security_protocol: String,
 
@@ -192,6 +195,13 @@ pub struct KafkaClusterSpec {
     /// SASL configuration secret reference
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sasl_secret: Option<SaslSecretRef>,
+
+    /// Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
+    /// with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
+    /// `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+    #[serde(default)]
+    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
+    pub oauth: Option<ClusterBinding>,
 
     /// Kafka TCP connection tuning
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -339,17 +349,17 @@ pub struct SchemaRegistryBackupConfig {
 
     /// Server certificate verification.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "registry_object")]
+    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
     pub tls: Option<SchemaRegistryTls>,
 
     /// Timeouts, retries and the rate limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "registry_object")]
+    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
     pub connection: Option<SchemaConnectionConfig>,
 
     /// What a backup captures.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "registry_object")]
+    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
     pub backup_options: Option<SchemaBackupOptions>,
 }
 
