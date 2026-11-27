@@ -8,7 +8,8 @@ use std::{
 use crate::adapters::convert_struct_to_crd_json_schema;
 use crate::{Error, Result};
 use kafka_backup_core::oauth::{
-    http::ClientAuth, CacheConfig, OauthConfig, OidcProviderConfig, ProviderConfig, Secret,
+    config::normalise_pool_list, framing::validate_extension, http::ClientAuth, CacheConfig,
+    OauthConfig, OidcProviderConfig, ProviderConfig, Secret,
 };
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -16,13 +17,89 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OauthSpec {
-    /// Named OIDC providers selected by the Schema Registry auth block.
+    /// Named OIDC providers selected by Kafka cluster or Schema Registry authentication.
     #[serde(default)]
     pub providers: BTreeMap<String, OperatorOidcProviderConfig>,
     /// Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
     #[serde(default, skip_serializing_if = "cache_is_default")]
     #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
     pub cache: CacheConfig,
+}
+
+/// `source.security.oauth` / `target.security.oauth`: which provider a
+/// cluster authenticates with, and the SASL extensions sent with its tokens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OauthClusterBinding {
+    /// A key of `oauth.providers`.
+    pub provider: String,
+    /// RFC 7628 SASL extensions sent with the token.
+    #[serde(default)]
+    pub extensions: OauthSaslExtensions,
+}
+
+/// The SASL extensions Confluent Cloud understands. Both are optional.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OauthSaslExtensions {
+    /// The Kafka cluster ID (`lkc-...`).
+    #[serde(
+        rename = "logicalCluster",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub logical_cluster: Option<String>,
+    /// The identity pool ID (`pool-...`), or a comma-separated list.
+    #[serde(
+        rename = "identityPoolId",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub identity_pool_id: Option<String>,
+}
+
+impl OauthSaslExtensions {
+    /// The extensions as sent: empty values dropped, a pool list normalised
+    /// to `pool-a,pool-b`, every value checked against RFC 7628.
+    pub fn to_map(&self) -> std::result::Result<BTreeMap<String, String>, String> {
+        let mut map = BTreeMap::new();
+        if let Some(cluster) = self.logical_cluster.as_deref().map(str::trim) {
+            if !cluster.is_empty() {
+                map.insert("logicalCluster".to_string(), cluster.to_string());
+            }
+        }
+        if let Some(pools) = &self.identity_pool_id {
+            let list = normalise_pool_list(pools);
+            if !list.is_empty() {
+                map.insert("identityPoolId".to_string(), list);
+            }
+        }
+        for (k, v) in &map {
+            validate_extension(k, v)?;
+        }
+        Ok(map)
+    }
+}
+
+pub(crate) fn broker_oauth_schema(_: &mut schemars::SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": "object",
+        "required": ["provider"],
+        "properties": {
+            "provider": {"type": "string", "minLength": 1},
+            "extensions": {
+                "type": "object",
+                "properties": {
+                    "logicalCluster": {"type": "string"},
+                    "identityPoolId": {"type": "string"}
+                }
+            }
+        }
+    })
+}
+
+pub(super) fn credential_root(namespace: &str) -> PathBuf {
+    Path::new("/etc/kafka-backup-operator/registry").join(namespace)
 }
 
 impl OauthSpec {

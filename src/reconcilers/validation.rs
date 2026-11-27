@@ -24,10 +24,10 @@ use tracing::{debug, info, warn};
 
 use super::status;
 use crate::adapters::{
-    build_validation_config, build_validation_report, emit_validation_evidence, evidence_report_id,
-    evidence_storage, send_validation_notifications, to_core_storage_config_for_validation,
-    to_core_validation_config, EvidenceOutcome, ResolvedBackupSource, ResolvedStorage,
-    ValidationReportInputs,
+    build_validation_config, build_validation_report, default_tls_dir, emit_validation_evidence,
+    evidence_report_id, evidence_storage, send_validation_notifications,
+    to_core_storage_config_for_validation, to_core_validation_config, validate_kafka_auth,
+    EvidenceOutcome, ResolvedBackupSource, ResolvedStorage, TlsFileManager, ValidationReportInputs,
 };
 use crate::crd::{KafkaBackup, KafkaBackupValidation};
 use crate::error::{Error, Result};
@@ -69,16 +69,7 @@ pub fn validate(validation: &KafkaBackupValidation) -> Result<()> {
     }
 
     if let Some(kafka_cluster) = &validation.spec.kafka_cluster {
-        // Validate TLS configuration: SSL/SASL_SSL requires at least one TLS secret
-        let protocol = kafka_cluster.security_protocol.to_uppercase();
-        if (protocol == "SSL" || protocol == "SASL_SSL")
-            && kafka_cluster.tls_secret.is_none()
-            && kafka_cluster.ca_secret.is_none()
-        {
-            return Err(Error::validation(
-                "securityProtocol SSL/SASL_SSL requires either tlsSecret or caSecret to be configured",
-            ));
-        }
+        validate_kafka_auth(kafka_cluster, validation.spec.oauth.as_ref())?;
 
         if let Some(connection) = &kafka_cluster.connection {
             if connection.connections_per_broker == 0 {
@@ -515,8 +506,15 @@ async fn execute_validation_internal(
     );
 
     // 3. Convert to kafka-backup-core ValidationConfig
-    let core_config = to_core_validation_config(&resolved_config, &backup_id, &storage)
-        .map_err(|e| Error::Core(format!("Failed to build core validation config: {}", e)))?;
+    let tls_manager = resolved_config
+        .kafka
+        .as_ref()
+        .and_then(|kafka| kafka.tls.as_ref())
+        .map(|tls| TlsFileManager::new(tls, &default_tls_dir(KIND, namespace, &name)))
+        .transpose()?;
+    let core_config =
+        to_core_validation_config(&resolved_config, &backup_id, &storage, tls_manager.as_ref())
+            .map_err(|e| Error::Core(format!("Failed to build core validation config: {}", e)))?;
 
     // 4. Create ValidationRunner from core library
     let runner = kafka_backup_core::validation::ValidationRunner::from_config(&core_config.checks);
@@ -538,23 +536,14 @@ async fn execute_validation_internal(
         serde_json::from_slice(&manifest_data)
             .map_err(|e| Error::Core(format!("Failed to parse backup manifest: {}", e)))?;
 
-    let target_bootstrap_servers = resolved_config
-        .kafka
-        .as_ref()
-        .map(|k| k.bootstrap_servers.clone())
-        .unwrap_or_default();
+    let target_bootstrap_servers = core_config.target.bootstrap_servers.clone();
 
     if target_bootstrap_servers.is_empty() {
         return Err(Error::validation(
             "Validation requires a target Kafka cluster; spec.kafka.bootstrapServers must be set",
         ));
     }
-    let kafka_config = resolved_config
-        .kafka
-        .as_ref()
-        .map(crate::adapters::to_core_kafka_config_for_validation)
-        .unwrap();
-    let target_router = kafka_backup_core::kafka::PartitionLeaderRouter::new(kafka_config)
+    let target_router = kafka_backup_core::kafka::PartitionLeaderRouter::new(core_config.target)
         .await
         .map_err(|e| Error::Core(format!("Failed to connect to target Kafka cluster: {}", e)))?;
 

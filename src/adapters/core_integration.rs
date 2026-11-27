@@ -11,6 +11,7 @@ use kafka_backup_core::config::{
     RepartitioningStrategy, RestoreOptions, SaslMechanism, SecurityConfig, SecurityProtocol,
     TopicRepartitioning, TopicSelection,
 };
+use kafka_backup_core::oauth::{self, KafkaRole, OauthConfig};
 use kafka_backup_core::storage::StorageBackendConfig;
 use kafka_backup_core::validation::{
     ChecksConfig as CoreChecksConfig, ConsumerGroupConfig as CoreConsumerGroupConfig,
@@ -66,7 +67,11 @@ pub fn to_core_backup_config(
         registry_restore: None,
     };
 
-    configure_registry(&mut config, resolved.schema_registry.as_ref())?;
+    configure_auth(
+        &mut config,
+        broker_oauth(&resolved.kafka),
+        resolved.schema_registry.as_ref(),
+    )?;
     config.validate()?;
     Ok(config)
 }
@@ -100,22 +105,35 @@ pub fn to_core_restore_config(
         registry_restore: None,
     };
 
-    configure_registry(&mut config, resolved.schema_registry.as_ref())?;
+    configure_auth(
+        &mut config,
+        broker_oauth(&resolved.kafka),
+        resolved.schema_registry.as_ref(),
+    )?;
     config.validate()?;
     Ok(config)
 }
 
-pub(crate) fn configure_registry(
+pub(crate) fn configure_auth(
     config: &mut Config,
-    resolved: Option<&ResolvedRegistryConfig>,
+    broker: Option<&OauthConfig>,
+    registry: Option<&ResolvedRegistryConfig>,
 ) -> kafka_backup_core::Result<()> {
-    if let Some(resolved) = resolved {
+    if let Some(resolved) = registry {
         config.schema_registry = Some(resolved.registry.clone());
-        config.oauth = resolved.oauth.clone();
-        if config.oauth.is_some() {
-            kafka_backup_core::oauth::install(config)
-                .map_err(|e| kafka_backup_core::Error::Config(e.to_string()))?;
+    }
+    let registry = registry.and_then(|resolved| resolved.oauth.as_ref());
+    config.oauth = broker.or(registry).cloned();
+    if let Some(oauth) = &mut config.oauth {
+        if let Some(registry) = registry.filter(|_| broker.is_some()) {
+            for (name, provider) in &registry.providers {
+                oauth
+                    .providers
+                    .entry(name.clone())
+                    .or_insert_with(|| provider.clone());
+            }
         }
+        oauth::install(config).map_err(|e| kafka_backup_core::Error::Config(e.to_string()))?;
     }
     Ok(())
 }
@@ -149,9 +167,22 @@ pub fn restore_offset_report_path(
     Some(base_path.join(backup_id).join("offset-mapping.json"))
 }
 
-/// Convert resolved Kafka configuration to kafka-backup-core KafkaConfig
-fn to_core_kafka_config(resolved: &ResolvedKafkaConfig, topics: &[String]) -> KafkaConfig {
-    to_core_kafka_config_with_tls(resolved, topics, None)
+fn broker_oauth(resolved: &ResolvedKafkaConfig) -> Option<&OauthConfig> {
+    resolved.oauth.as_ref().map(|oauth| &oauth.config)
+}
+
+/// Convert a standalone target and install its broker authentication before client creation.
+pub(crate) fn to_core_target_kafka_config(
+    resolved: &ResolvedKafkaConfig,
+    topics: &[String],
+    tls_manager: Option<&TlsFileManager>,
+) -> kafka_backup_core::Result<KafkaConfig> {
+    let mut kafka = to_core_kafka_config_with_tls(resolved, topics, tls_manager);
+    if let Some(oauth) = broker_oauth(resolved) {
+        oauth::install_cluster(Some(oauth), KafkaRole::Target, &mut kafka)
+            .map_err(|e| kafka_backup_core::Error::Config(e.to_string()))?;
+    }
+    Ok(kafka)
 }
 
 /// Convert resolved Kafka configuration to kafka-backup-core KafkaConfig with TLS
@@ -194,11 +225,12 @@ pub fn to_core_security_config_with_tls(
         "PLAINTEXT" => SecurityProtocol::Plaintext,
         "SSL" => SecurityProtocol::Ssl,
         "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
-        "SASL_SSL" => SecurityProtocol::SaslSsl,
+        "SASL_SSL" | "OAUTHBEARER" => SecurityProtocol::SaslSsl,
         _ => SecurityProtocol::Plaintext,
     };
 
     let (sasl_mechanism, sasl_username, sasl_password) = match &resolved.sasl {
+        _ if resolved.oauth.is_some() => (Some(SaslMechanism::OAuthBearer), None, None),
         Some(sasl) => {
             let mechanism = match sasl.mechanism.to_uppercase().as_str() {
                 "PLAIN" => Some(SaslMechanism::Plain),
@@ -244,11 +276,6 @@ pub fn to_core_security_config_with_tls(
 /// Convert resolved storage configuration to kafka-backup-core StorageBackendConfig
 pub fn to_core_storage_config_for_validation(resolved: &ResolvedStorage) -> StorageBackendConfig {
     to_core_storage_config(resolved)
-}
-
-/// Convert resolved Kafka configuration to kafka-backup-core KafkaConfig (for validation)
-pub fn to_core_kafka_config_for_validation(resolved: &ResolvedKafkaConfig) -> KafkaConfig {
-    to_core_kafka_config(resolved, &[])
 }
 
 /// Convert resolved storage configuration to kafka-backup-core StorageBackendConfig.
@@ -625,11 +652,12 @@ pub fn to_core_validation_config(
     resolved: &ResolvedValidationConfig,
     backup_id: &str,
     storage: &ResolvedStorage,
+    tls_manager: Option<&TlsFileManager>,
 ) -> kafka_backup_core::Result<CoreValidationConfig> {
     let storage_config = to_core_storage_config(storage);
 
     let kafka_config = match &resolved.kafka {
-        Some(kafka) => to_core_kafka_config(kafka, &[]),
+        Some(kafka) => to_core_target_kafka_config(kafka, &[], tls_manager)?,
         None => KafkaConfig {
             bootstrap_servers: vec![],
             security: SecurityConfig::default(),
@@ -661,7 +689,7 @@ pub fn to_core_validation_config(
         notifications,
         pitr_timestamp: None,
         triggered_by: Some("kafka-backup-operator".to_string()),
-        oauth: None,
+        oauth: resolved.kafka.as_ref().and_then(broker_oauth).cloned(),
     })
 }
 

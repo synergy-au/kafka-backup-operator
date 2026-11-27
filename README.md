@@ -392,6 +392,46 @@ This release aligns the operator CRDs and adapters with `kafka-backup-core` `v0.
 
 ## Configuration Examples
 
+### Kafka broker OAuth/OIDC
+
+KafkaBackup, KafkaRestore, KafkaBackupValidation, KafkaOffsetReset, and
+KafkaOffsetRollback use the same broker OAuth configuration:
+
+```yaml
+spec:
+  kafkaCluster:
+    bootstrapServers: ["broker.example.com:9092"]
+    securityProtocol: SASL_SSL
+    oauth:
+      provider: broker-oidc
+      extensions:
+        logicalCluster: lkc-example
+        identityPoolId: pool-example
+  oauth:
+    providers:
+      broker-oidc:
+        tokenEndpointUrl: https://identity.example.com/oauth2/token
+        clientIdFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-id
+        clientSecretFilePath: /etc/kafka-backup-operator/registry/data/oidc-client-secret
+```
+
+`SASL_SSL` with an OAuth binding selects SASL/OAUTHBEARER. `OAUTHBEARER` is also
+accepted as a TLS-only alias for `SASL_SSL` and requires the binding. Do not
+combine broker OAuth with `saslSecret` or a plaintext protocol. The extensions
+are optional. Broker TLS uses public trust roots unless a custom CA is supplied
+through `caSecret` or `tlsSecret`.
+
+Use either `tokenEndpointUrl` or `issuer`. Mount both OIDC credential files
+read-only under `/etc/kafka-backup-operator/registry/<resource-namespace>/`
+(`data` in the example). A backup or restore can select different providers
+for Kafka and Schema Registry, or use the same name to share a token cache.
+Only referenced providers are resolved. Restrict resource write access to
+principals trusted to use the mounted credentials, and restrict operator egress
+to approved brokers and identity providers.
+
+Apply the updated CRDs before upgrading the operator or submitting resources
+that use these fields.
+
 ### Confluent Schema Registry
 
 Apply the updated CRDs before using these fields (including when upgrading
@@ -460,8 +500,8 @@ Replace `data` with the namespace of the backup or restore. Use the chart's
 read-only into the operator pod. OAuth credential paths and optional `caCert`,
 `tls.ca_cert`, and the Basic and mTLS credential paths must
 point to files under `/etc/kafka-backup-operator/registry/<resource-namespace>/`.
-This configuration provides OIDC client credentials for the registry, not
-authentication to Kafka brokers.
+This example selects a provider only for the registry. Broker authentication
+requires its own `spec.kafkaCluster.oauth` binding.
 
 Grant write access to these resources only to principals trusted to use the
 mounted credentials and configure their destinations. Restrict operator egress

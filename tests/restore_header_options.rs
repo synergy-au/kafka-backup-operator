@@ -115,6 +115,7 @@ fn struct_literal_fields_are_present() {
             tls_secret: None,
             ca_secret: None,
             sasl_secret: None,
+            oauth: None,
             connection: None,
         },
         topics: vec![],

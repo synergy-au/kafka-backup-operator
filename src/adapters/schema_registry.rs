@@ -10,7 +10,7 @@ use kafka_backup_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::oauth::{checked_file, read_credential_file, OauthSpec};
+use super::oauth::{checked_file, credential_root, read_credential_file, OauthSpec};
 use crate::error::{Error, Result};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +80,7 @@ pub(super) async fn resolve_registry(
     oauth: Option<&OauthSpec>,
     namespace: &str,
 ) -> Result<ResolvedRegistryConfig> {
-    let root = Path::new("/etc/kafka-backup-operator/registry").join(namespace);
+    let root = credential_root(namespace);
     resolve_registry_from_mount(registry, auth, oauth, &root).await
 }
 
@@ -258,7 +258,7 @@ mod tests {
             "storage": {"backend": "memory"}
         }))
         .unwrap();
-        crate::adapters::configure_registry(&mut core, Some(&resolved)).unwrap();
+        crate::adapters::configure_auth(&mut core, None, Some(&resolved)).unwrap();
         let Some(SchemaRegistryAuth::OAuth(binding)) = core.schema_registry.unwrap().auth else {
             panic!("OAuth registry binding expected");
         };

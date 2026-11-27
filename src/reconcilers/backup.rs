@@ -131,16 +131,7 @@ pub fn validate(backup: &KafkaBackup) -> Result<()> {
         }
     }
 
-    // Validate TLS configuration: SSL/SASL_SSL requires at least one TLS secret
-    let protocol = backup.spec.kafka_cluster.security_protocol.to_uppercase();
-    if (protocol == "SSL" || protocol == "SASL_SSL")
-        && backup.spec.kafka_cluster.tls_secret.is_none()
-        && backup.spec.kafka_cluster.ca_secret.is_none()
-    {
-        return Err(Error::validation(
-            "securityProtocol SSL/SASL_SSL requires either tlsSecret or caSecret to be configured",
-        ));
-    }
+    crate::adapters::validate_kafka_auth(&backup.spec.kafka_cluster, backup.spec.oauth.as_ref())?;
 
     if let Some(connection) = &backup.spec.kafka_cluster.connection {
         if connection.connections_per_broker == 0 {

@@ -140,16 +140,7 @@ pub fn validate(restore: &KafkaRestore) -> Result<()> {
         }
     }
 
-    // Validate TLS configuration: SSL/SASL_SSL requires at least one TLS secret
-    let protocol = restore.spec.kafka_cluster.security_protocol.to_uppercase();
-    if (protocol == "SSL" || protocol == "SASL_SSL")
-        && restore.spec.kafka_cluster.tls_secret.is_none()
-        && restore.spec.kafka_cluster.ca_secret.is_none()
-    {
-        return Err(Error::validation(
-            "securityProtocol SSL/SASL_SSL requires either tlsSecret or caSecret to be configured",
-        ));
-    }
+    crate::adapters::validate_kafka_auth(&restore.spec.kafka_cluster, restore.spec.oauth.as_ref())?;
 
     if let Some(connection) = &restore.spec.kafka_cluster.connection {
         if connection.connections_per_broker == 0 {
@@ -368,6 +359,18 @@ async fn execute_dry_run(
     let name = restore.name_any();
     let api: Api<KafkaRestore> = Api::namespaced(client.clone(), namespace);
 
+    if restore.spec.kafka_cluster.oauth.is_some() {
+        let kafka = crate::adapters::build_kafka_config(
+            &restore.spec.kafka_cluster,
+            restore.spec.oauth.as_ref(),
+            client,
+            namespace,
+        )
+        .await?;
+        crate::adapters::to_core_target_kafka_config(&kafka, &[], None)
+            .map_err(|e| Error::config(e.to_string()))?;
+    }
+
     if let Some(resolved) = resolve_restore_registry(&restore.spec, namespace).await? {
         resolved
             .registry
@@ -390,7 +393,7 @@ async fn execute_dry_run(
             apicurio_registry: None,
             registry_restore: None,
         };
-        crate::adapters::configure_registry(&mut config, Some(&resolved))
+        crate::adapters::configure_auth(&mut config, None, Some(&resolved))
             .map_err(|e| Error::config(e.to_string()))?;
     }
 

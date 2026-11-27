@@ -236,9 +236,22 @@ spec:
                     description: |-
                       Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
                       with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                      `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+                      `provider` names a key of `spec.oauth.providers`.
+                    properties:
+                      extensions:
+                        properties:
+                          identityPoolId:
+                            type: string
+                          logicalCluster:
+                            type: string
+                        type: object
+                      provider:
+                        minLength: 1
+                        type: string
+                    required:
+                    - provider
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -263,7 +276,9 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+                    description: |-
+                      Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+                      OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -289,6 +304,7 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                - oauth
                 type: object
               metrics:
                 description: Metrics configuration
@@ -394,7 +410,9 @@ spec:
                       - clientSecretFilePath
                       type: object
                     default: {}
-                    description: Named OIDC providers selected by the Schema Registry auth block.
+                    description: >-
+                      Named OIDC providers selected by Kafka cluster or Schema Registry
+                      authentication.
                     type: object
                 type: object
               onMissingTopic:
@@ -1410,9 +1428,22 @@ spec:
                     description: |-
                       Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
                       with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                      `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+                      `provider` names a key of `spec.oauth.providers`.
+                    properties:
+                      extensions:
+                        properties:
+                          identityPoolId:
+                            type: string
+                          logicalCluster:
+                            type: string
+                        type: object
+                      provider:
+                        minLength: 1
+                        type: string
+                    required:
+                    - provider
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -1437,7 +1468,9 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+                    description: |-
+                      Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+                      OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -1463,6 +1496,7 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                - oauth
                 type: object
               oauth:
                 description: Named OAuth providers for use in auth configurations
@@ -1527,7 +1561,9 @@ spec:
                       - clientSecretFilePath
                       type: object
                     default: {}
-                    description: Named OIDC providers selected by the Schema Registry auth block.
+                    description: >-
+                      Named OIDC providers selected by Kafka cluster or Schema Registry
+                      authentication.
                     type: object
                 type: object
               offsetReset:
@@ -2057,9 +2093,22 @@ spec:
                     description: |-
                       Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
                       with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                      `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+                      `provider` names a key of `spec.oauth.providers`.
+                    properties:
+                      extensions:
+                        properties:
+                          identityPoolId:
+                            type: string
+                          logicalCluster:
+                            type: string
+                        type: object
+                      provider:
+                        minLength: 1
+                        type: string
+                    required:
+                    - provider
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -2084,7 +2133,9 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+                    description: |-
+                      Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+                      OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -2110,6 +2161,75 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                - oauth
+                type: object
+              oauth:
+                description: Named OAuth providers for the target Kafka cluster
+                nullable: true
+                properties:
+                  cache:
+                    description: Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      properties:
+                        allowInsecureHttp:
+                          default: false
+                          description: |-
+                            Allow `http://` to a non-loopback host. Client secrets then travel in
+                            clear text; for isolated test networks only.
+                          type: boolean
+                        audience:
+                          description: Sent as the `audience` parameter (Okta, Auth0). Entra uses `scope`.
+                          nullable: true
+                          type: string
+                        caCert:
+                          description: Extra CA certificate (PEM) for a private identity provider.
+                          nullable: true
+                          type: string
+                        clientAuth:
+                          default: basic
+                          description: "`basic` (default) or `post` client authentication."
+                          enum:
+                          - basic
+                          - post
+                          type: string
+                        clientIdFilePath:
+                          description: Path to the file containing the client ID.
+                          type: string
+                        clientSecretFilePath:
+                          description: Path to the file containing the client secret.
+                          type: string
+                        extraParams:
+                          additionalProperties:
+                            type: string
+                          default: {}
+                          description: Extra form parameters for the token request.
+                          type: object
+                        issuer:
+                          description: >-
+                            OIDC issuer; the token endpoint is discovered from
+                            `{issuer}/.well-known/openid-configuration`.
+                          nullable: true
+                          type: string
+                        scope:
+                          description: OAuth scope to request. Optional.
+                          nullable: true
+                          type: string
+                        tokenEndpointUrl:
+                          description: The token endpoint. Set exactly one of `tokenEndpointUrl` and `issuer`.
+                          nullable: true
+                          type: string
+                      required:
+                      - clientIdFilePath
+                      - clientSecretFilePath
+                      type: object
+                    default: {}
+                    description: >-
+                      Named OIDC providers selected by Kafka cluster or Schema Registry
+                      authentication.
+                    type: object
                 type: object
               offsetMappingRef:
                 description: Reference to offset mapping from a restore operation
@@ -2418,9 +2538,22 @@ spec:
                     description: |-
                       Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
                       with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                      `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+                      `provider` names a key of `spec.oauth.providers`.
+                    properties:
+                      extensions:
+                        properties:
+                          identityPoolId:
+                            type: string
+                          logicalCluster:
+                            type: string
+                        type: object
+                      provider:
+                        minLength: 1
+                        type: string
+                    required:
+                    - provider
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -2445,7 +2578,9 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+                    description: |-
+                      Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+                      OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -2471,6 +2606,75 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                - oauth
+                type: object
+              oauth:
+                description: Named OAuth providers for the target Kafka cluster
+                nullable: true
+                properties:
+                  cache:
+                    description: Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      properties:
+                        allowInsecureHttp:
+                          default: false
+                          description: |-
+                            Allow `http://` to a non-loopback host. Client secrets then travel in
+                            clear text; for isolated test networks only.
+                          type: boolean
+                        audience:
+                          description: Sent as the `audience` parameter (Okta, Auth0). Entra uses `scope`.
+                          nullable: true
+                          type: string
+                        caCert:
+                          description: Extra CA certificate (PEM) for a private identity provider.
+                          nullable: true
+                          type: string
+                        clientAuth:
+                          default: basic
+                          description: "`basic` (default) or `post` client authentication."
+                          enum:
+                          - basic
+                          - post
+                          type: string
+                        clientIdFilePath:
+                          description: Path to the file containing the client ID.
+                          type: string
+                        clientSecretFilePath:
+                          description: Path to the file containing the client secret.
+                          type: string
+                        extraParams:
+                          additionalProperties:
+                            type: string
+                          default: {}
+                          description: Extra form parameters for the token request.
+                          type: object
+                        issuer:
+                          description: >-
+                            OIDC issuer; the token endpoint is discovered from
+                            `{issuer}/.well-known/openid-configuration`.
+                          nullable: true
+                          type: string
+                        scope:
+                          description: OAuth scope to request. Optional.
+                          nullable: true
+                          type: string
+                        tokenEndpointUrl:
+                          description: The token endpoint. Set exactly one of `tokenEndpointUrl` and `issuer`.
+                          nullable: true
+                          type: string
+                      required:
+                      - clientIdFilePath
+                      - clientSecretFilePath
+                      type: object
+                    default: {}
+                    description: >-
+                      Named OIDC providers selected by Kafka cluster or Schema Registry
+                      authentication.
+                    type: object
                 type: object
               snapshotRef:
                 description: Reference to snapshot to restore from
@@ -3328,9 +3532,22 @@ spec:
                     description: |-
                       Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
                       with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-                      `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
+                      `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+                      `provider` names a key of `spec.oauth.providers`.
+                    properties:
+                      extensions:
+                        properties:
+                          identityPoolId:
+                            type: string
+                          logicalCluster:
+                            type: string
+                        type: object
+                      provider:
+                        minLength: 1
+                        type: string
+                    required:
+                    - provider
                     type: object
-                    x-kubernetes-preserve-unknown-fields: true
                   saslSecret:
                     description: SASL configuration secret reference
                     nullable: true
@@ -3355,7 +3572,9 @@ spec:
                     type: object
                   securityProtocol:
                     default: PLAINTEXT
-                    description: Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+                    description: |-
+                      Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+                      OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
                     type: string
                   tlsSecret:
                     description: TLS configuration secret reference
@@ -3381,6 +3600,7 @@ spec:
                     type: object
                 required:
                 - bootstrapServers
+                - oauth
                 type: object
               notifications:
                 description: Notification channels
@@ -3429,6 +3649,74 @@ spec:
                         type: object
                     required:
                     - webhookSecret
+                    type: object
+                type: object
+              oauth:
+                description: Named OAuth providers for the target Kafka cluster
+                nullable: true
+                properties:
+                  cache:
+                    description: Token cache timing settings. Uses humantime durations (`30s`, `5m`, etc.).
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  providers:
+                    additionalProperties:
+                      properties:
+                        allowInsecureHttp:
+                          default: false
+                          description: |-
+                            Allow `http://` to a non-loopback host. Client secrets then travel in
+                            clear text; for isolated test networks only.
+                          type: boolean
+                        audience:
+                          description: Sent as the `audience` parameter (Okta, Auth0). Entra uses `scope`.
+                          nullable: true
+                          type: string
+                        caCert:
+                          description: Extra CA certificate (PEM) for a private identity provider.
+                          nullable: true
+                          type: string
+                        clientAuth:
+                          default: basic
+                          description: "`basic` (default) or `post` client authentication."
+                          enum:
+                          - basic
+                          - post
+                          type: string
+                        clientIdFilePath:
+                          description: Path to the file containing the client ID.
+                          type: string
+                        clientSecretFilePath:
+                          description: Path to the file containing the client secret.
+                          type: string
+                        extraParams:
+                          additionalProperties:
+                            type: string
+                          default: {}
+                          description: Extra form parameters for the token request.
+                          type: object
+                        issuer:
+                          description: >-
+                            OIDC issuer; the token endpoint is discovered from
+                            `{issuer}/.well-known/openid-configuration`.
+                          nullable: true
+                          type: string
+                        scope:
+                          description: OAuth scope to request. Optional.
+                          nullable: true
+                          type: string
+                        tokenEndpointUrl:
+                          description: The token endpoint. Set exactly one of `tokenEndpointUrl` and `issuer`.
+                          nullable: true
+                          type: string
+                      required:
+                      - clientIdFilePath
+                      - clientSecretFilePath
+                      type: object
+                    default: {}
+                    description: >-
+                      Named OIDC providers selected by Kafka cluster or Schema Registry
+                      authentication.
                     type: object
                 type: object
               schedule:

@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Condition, KafkaClusterSpec};
+use crate::adapters::OauthSpec;
 
 /// KafkaOffsetReset resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -27,6 +28,10 @@ use super::{Condition, KafkaClusterSpec};
 pub struct KafkaOffsetResetSpec {
     /// Target Kafka cluster
     pub kafka_cluster: KafkaClusterSpec,
+
+    /// Named OAuth providers for the target Kafka cluster
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OauthSpec>,
 
     /// Consumer groups to reset
     pub consumer_groups: Vec<String>,

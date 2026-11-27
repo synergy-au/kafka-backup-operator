@@ -27,6 +27,7 @@ fn valid_kafka_cluster() -> KafkaClusterSpec {
         tls_secret: None,
         ca_secret: None,
         sasl_secret: None,
+        oauth: None,
         connection: None,
     }
 }
@@ -794,6 +795,7 @@ fn restore_dry_run_mode_passes_validation() {
 fn valid_offset_reset_spec() -> KafkaOffsetResetSpec {
     KafkaOffsetResetSpec {
         kafka_cluster: valid_kafka_cluster(),
+        oauth: None,
         consumer_groups: vec!["test-group".to_string()],
         reset_strategy: OffsetResetStrategy::ToEarliest,
         reset_timestamp: None,
@@ -1043,6 +1045,7 @@ fn valid_validation_spec() -> KafkaBackupValidationSpec {
             storage: None,
         },
         kafka_cluster: None,
+        oauth: None,
         checks: valid_validation_checks(),
         evidence: None,
         notifications: None,

@@ -160,7 +160,13 @@ pub async fn build_restore_config(
     let backup_source = resolve_backup_ref(&restore.spec.backup_ref, client, namespace).await?;
 
     // Resolve Kafka configuration
-    let kafka = build_kafka_config(&restore.spec.kafka_cluster, client, namespace).await?;
+    let kafka = build_kafka_config(
+        &restore.spec.kafka_cluster,
+        restore.spec.oauth.as_ref(),
+        client,
+        namespace,
+    )
+    .await?;
     let schema_registry = resolve_restore_registry(&restore.spec, namespace).await?;
 
     // Build PITR config

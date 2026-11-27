@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Condition, KafkaClusterSpec};
+use crate::adapters::OauthSpec;
 
 /// KafkaOffsetRollback resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -29,6 +30,10 @@ pub struct KafkaOffsetRollbackSpec {
 
     /// Target Kafka cluster
     pub kafka_cluster: KafkaClusterSpec,
+
+    /// Named OAuth providers for the target Kafka cluster
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OauthSpec>,
 
     /// Consumer groups to rollback (empty = all groups in snapshot)
     #[serde(default)]

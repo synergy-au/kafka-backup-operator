@@ -95,6 +95,44 @@ fn generated_crd_schemas_avoid_unsupported_kubernetes_keywords() {
         violations.join("\n")
     );
 
+    for kind in [
+        "KafkaBackup",
+        "KafkaRestore",
+        "KafkaBackupValidation",
+        "KafkaOffsetReset",
+        "KafkaOffsetRollback",
+    ] {
+        let crd = crds
+            .iter()
+            .find(|crd| crd["spec"]["names"]["kind"] == kind)
+            .unwrap();
+        for version in crd["spec"]["versions"].as_array().unwrap() {
+            let spec = version
+                .pointer("/schema/openAPIV3Schema/properties/spec/properties")
+                .unwrap();
+            let binding = &spec["kafkaCluster"]["properties"]["oauth"];
+            assert_eq!(binding["required"], json!(["provider"]), "{kind}");
+            assert_eq!(
+                binding["properties"]["provider"]["type"], "string",
+                "{kind}"
+            );
+            for field in ["logicalCluster", "identityPoolId"] {
+                assert_eq!(
+                    binding["properties"]["extensions"]["properties"][field]["type"], "string",
+                    "{kind}.{field}"
+                );
+            }
+            let provider = &spec["oauth"]["properties"]["providers"]["additionalProperties"];
+            assert_eq!(provider["type"], "object", "{kind}");
+            for field in ["clientIdFilePath", "clientSecretFilePath"] {
+                assert!(provider["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!(field)));
+            }
+        }
+    }
+
     for (kind, options) in [
         ("KafkaBackup", "backupOptions"),
         ("KafkaRestore", "restoreOptions"),

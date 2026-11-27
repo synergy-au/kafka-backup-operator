@@ -6,6 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Condition, KafkaClusterSpec, StorageSpec};
+use crate::adapters::OauthSpec;
 
 /// KafkaBackupValidation resource specification
 #[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema)]
@@ -31,6 +32,10 @@ pub struct KafkaBackupValidationSpec {
     /// Target Kafka cluster (required for consumer group offset checks)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kafka_cluster: Option<KafkaClusterSpec>,
+
+    /// Named OAuth providers for the target Kafka cluster
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oauth: Option<OauthSpec>,
 
     /// Validation checks to run
     pub checks: ValidationChecksSpec,

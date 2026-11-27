@@ -6,10 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use chrono::Utc;
-use kafka_backup_core::config::KafkaConfig as CoreKafkaConfig;
-use kafka_backup_core::config::{
-    IsolationLevel, SaslMechanism, SecurityConfig, SecurityProtocol, TopicSelection,
-};
+use kafka_backup_core::config::IsolationLevel;
 use kafka_backup_core::kafka::consumer_groups::{
     commit_offsets, fetch_offsets, offsets_for_times, CommittedOffset,
 };
@@ -27,7 +24,8 @@ use tracing::{error, info, warn};
 
 use super::status;
 use crate::adapters::{
-    build_kafka_config, default_tls_dir, to_core_connection_config, TlsFileManager,
+    build_kafka_config, default_tls_dir, to_core_target_kafka_config, validate_kafka_auth,
+    TlsFileManager,
 };
 use crate::crd::{KafkaOffsetReset, KafkaRestore, OffsetMappingRef, OffsetResetStrategy};
 use crate::error::{Error, Result};
@@ -77,16 +75,7 @@ pub fn validate(reset: &KafkaOffsetReset) -> Result<()> {
         return Err(Error::validation("parallelism must be greater than 0"));
     }
 
-    // Validate TLS configuration: SSL/SASL_SSL requires at least one TLS secret
-    let protocol = reset.spec.kafka_cluster.security_protocol.to_uppercase();
-    if (protocol == "SSL" || protocol == "SASL_SSL")
-        && reset.spec.kafka_cluster.tls_secret.is_none()
-        && reset.spec.kafka_cluster.ca_secret.is_none()
-    {
-        return Err(Error::validation(
-            "securityProtocol SSL/SASL_SSL requires either tlsSecret or caSecret to be configured",
-        ));
-    }
+    validate_kafka_auth(&reset.spec.kafka_cluster, reset.spec.oauth.as_ref())?;
 
     if let Some(connection) = &reset.spec.kafka_cluster.connection {
         if connection.connections_per_broker == 0 {
@@ -359,10 +348,16 @@ async fn execute_reset_internal(
     );
 
     // Build resolved Kafka configuration from operator config
-    let resolved_kafka = build_kafka_config(&reset.spec.kafka_cluster, client, namespace).await?;
+    let resolved_kafka = build_kafka_config(
+        &reset.spec.kafka_cluster,
+        reset.spec.oauth.as_ref(),
+        client,
+        namespace,
+    )
+    .await?;
 
     // Create TLS file manager if TLS is configured
-    let _tls_manager = if let Some(tls) = &resolved_kafka.tls {
+    let tls_manager = if let Some(tls) = &resolved_kafka.tls {
         let tls_dir = default_tls_dir("KafkaOffsetReset", namespace, &name);
         Some(TlsFileManager::new(tls, &tls_dir)?)
     } else {
@@ -370,16 +365,9 @@ async fn execute_reset_internal(
     };
 
     // Build kafka-backup-core KafkaConfig
-    let security_config = build_core_security_config(&resolved_kafka, _tls_manager.as_ref());
-    let core_kafka_config = CoreKafkaConfig {
-        bootstrap_servers: bootstrap_servers.clone(),
-        security: security_config,
-        topics: TopicSelection {
-            include: reset.spec.topics.clone(),
-            exclude: vec![],
-        },
-        connection: to_core_connection_config(&resolved_kafka),
-    };
+    let core_kafka_config =
+        to_core_target_kafka_config(&resolved_kafka, &reset.spec.topics, tls_manager.as_ref())
+            .map_err(|e| Error::config(e.to_string()))?;
 
     // Connect through a partition-leader router: ListOffsets for the
     // to-earliest/latest/timestamp strategies must reach each partition's
@@ -651,61 +639,6 @@ fn resolve_offset_mapping_path(
     Err(Error::validation(
         "offsetMappingRef must specify restoreName, path, or pvcName",
     ))
-}
-
-/// Build kafka-backup-core SecurityConfig from resolved operator config
-fn build_core_security_config(
-    resolved: &crate::adapters::ResolvedKafkaConfig,
-    tls_manager: Option<&TlsFileManager>,
-) -> SecurityConfig {
-    let security_protocol = match resolved.security_protocol.to_uppercase().as_str() {
-        "PLAINTEXT" => SecurityProtocol::Plaintext,
-        "SSL" => SecurityProtocol::Ssl,
-        "SASL_PLAINTEXT" => SecurityProtocol::SaslPlaintext,
-        "SASL_SSL" => SecurityProtocol::SaslSsl,
-        _ => SecurityProtocol::Plaintext,
-    };
-
-    let (sasl_mechanism, sasl_username, sasl_password) = match &resolved.sasl {
-        Some(sasl) => {
-            let mechanism = match sasl.mechanism.to_uppercase().as_str() {
-                "PLAIN" => Some(SaslMechanism::Plain),
-                "SCRAM-SHA-256" => Some(SaslMechanism::ScramSha256),
-                "SCRAM-SHA-512" => Some(SaslMechanism::ScramSha512),
-                _ => None,
-            };
-            (
-                mechanism,
-                Some(sasl.username.clone()),
-                Some(sasl.password.clone()),
-            )
-        }
-        None => (None, None, None),
-    };
-
-    let (ssl_ca_location, ssl_certificate_location, ssl_key_location) = match tls_manager {
-        Some(mgr) => (
-            Some(mgr.ca_location()),
-            mgr.certificate_location(),
-            mgr.key_location(),
-        ),
-        None => (None, None, None),
-    };
-
-    SecurityConfig {
-        security_protocol,
-        sasl_mechanism,
-        sasl_username,
-        sasl_password,
-        ssl_ca_location,
-        ssl_certificate_location,
-        ssl_key_location,
-        sasl_kerberos_service_name: None,
-        sasl_keytab_path: None,
-        sasl_krb5_config_path: None,
-        sasl_mechanism_plugin_factory: None,
-        oauth: None,
-    }
 }
 
 /// Reset offsets for a single consumer group

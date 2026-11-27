@@ -2,8 +2,9 @@
 //!
 //! Converts KafkaBackup CRD spec to kafka-backup-core configuration.
 
-use kafka_backup_core::schema_registry::SchemaRegistryConfig;
+use kafka_backup_core::{oauth::OauthConfig, schema_registry::SchemaRegistryConfig};
 use kube::Client;
+use std::path::Path;
 
 use crate::crd::{
     CheckpointSpec, CircuitBreakerSpec, KafkaBackup, KafkaBackupSpec, KafkaClusterSpec,
@@ -11,6 +12,7 @@ use crate::crd::{
 };
 use crate::error::{Error, Result};
 
+use super::oauth::{credential_root, OauthClusterBinding, OauthSpec};
 use super::schema_registry::{resolve_registry, ResolvedRegistryConfig};
 use super::secrets::{get_sasl_credentials, get_tls_credentials_split, TlsCredentials};
 use super::storage_config::{build_storage_config, ResolvedStorage};
@@ -48,7 +50,14 @@ pub struct ResolvedKafkaConfig {
     pub security_protocol: String,
     pub tls: Option<TlsCredentials>,
     pub sasl: Option<SaslCredentials>,
+    pub oauth: Option<ResolvedBrokerOauth>,
     pub connection: ResolvedKafkaConnectionConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedBrokerOauth {
+    pub binding: OauthClusterBinding,
+    pub config: OauthConfig,
 }
 
 /// Resolved Kafka connection tuning
@@ -181,7 +190,13 @@ pub async fn build_backup_config(
     namespace: &str,
 ) -> Result<ResolvedBackupConfig> {
     // Resolve Kafka configuration
-    let kafka = build_kafka_config(&backup.spec.kafka_cluster, client, namespace).await?;
+    let kafka = build_kafka_config(
+        &backup.spec.kafka_cluster,
+        backup.spec.oauth.as_ref(),
+        client,
+        namespace,
+    )
+    .await?;
 
     let schema_registry = resolve_backup_registry(&backup.spec, namespace).await?;
 
@@ -243,11 +258,87 @@ pub async fn build_backup_config(
 }
 
 /// Build Kafka cluster configuration with resolved credentials
+pub(crate) fn validate_kafka_auth(
+    kafka: &KafkaClusterSpec,
+    oauth: Option<&OauthSpec>,
+) -> Result<()> {
+    let protocol = kafka.security_protocol.to_ascii_uppercase();
+    if let Some(binding) = &kafka.oauth {
+        if !matches!(protocol.as_str(), "SASL_SSL" | "OAUTHBEARER") {
+            return Err(Error::validation(
+                "spec.kafkaCluster.oauth requires securityProtocol SASL_SSL or OAUTHBEARER (TLS)",
+            ));
+        }
+        if kafka.sasl_secret.is_some() {
+            return Err(Error::validation(
+                "spec.kafkaCluster.oauth and spec.kafkaCluster.saslSecret are mutually exclusive",
+            ));
+        }
+        if binding.provider.trim().is_empty() {
+            return Err(Error::validation(
+                "spec.kafkaCluster.oauth.provider must not be blank",
+            ));
+        }
+        binding.extensions.to_map().map_err(|err| {
+            Error::validation(format!("Invalid spec.kafkaCluster.oauth.extensions: {err}"))
+        })?;
+        if !oauth.is_some_and(|spec| spec.providers.contains_key(&binding.provider)) {
+            return Err(Error::validation(format!(
+                "spec.kafkaCluster.oauth.provider '{}' is not defined in spec.oauth.providers",
+                binding.provider
+            )));
+        }
+    } else {
+        if protocol == "OAUTHBEARER"
+            || kafka
+                .sasl_secret
+                .as_ref()
+                .is_some_and(|sasl| sasl.mechanism.eq_ignore_ascii_case("OAUTHBEARER"))
+        {
+            return Err(Error::validation(
+                "OAUTHBEARER requires spec.kafkaCluster.oauth, not spec.kafkaCluster.saslSecret",
+            ));
+        }
+        if matches!(protocol.as_str(), "SSL" | "SASL_SSL")
+            && kafka.tls_secret.is_none()
+            && kafka.ca_secret.is_none()
+        {
+            return Err(Error::validation(
+                "securityProtocol SSL/SASL_SSL requires either tlsSecret or caSecret to be configured",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub async fn build_kafka_config(
     kafka: &KafkaClusterSpec,
+    oauth: Option<&OauthSpec>,
     client: &Client,
     namespace: &str,
 ) -> Result<ResolvedKafkaConfig> {
+    build_kafka_config_from_mount(kafka, oauth, client, namespace, &credential_root(namespace))
+        .await
+}
+
+async fn build_kafka_config_from_mount(
+    kafka: &KafkaClusterSpec,
+    oauth: Option<&OauthSpec>,
+    client: &Client,
+    namespace: &str,
+    root: &Path,
+) -> Result<ResolvedKafkaConfig> {
+    validate_kafka_auth(kafka, oauth)?;
+    let oauth = match (&kafka.oauth, oauth) {
+        (Some(binding), Some(spec)) => Some(ResolvedBrokerOauth {
+            binding: binding.clone(),
+            config: spec
+                .resolve_provider(&binding.provider, root)
+                .await
+                .map_err(|err| Error::config(format!("spec.kafkaCluster.oauth: {err}")))?,
+        }),
+        _ => None,
+    };
     // Resolve TLS credentials if configured
     let has_tls = kafka.tls_secret.is_some();
     let has_ca = kafka.ca_secret.is_some();
@@ -301,6 +392,7 @@ pub async fn build_kafka_config(
         security_protocol: kafka.security_protocol.clone(),
         tls,
         sasl,
+        oauth,
         connection: kafka
             .connection
             .as_ref()
@@ -369,6 +461,270 @@ fn build_metrics_config(metrics: &MetricsSpec) -> ResolvedMetricsConfig {
 }
 
 #[cfg(test)]
+mod broker_oauth_tests {
+    use super::*;
+    use crate::adapters::{
+        build_restore_config, build_validation_config, to_core_backup_config,
+        to_core_restore_config, to_core_target_kafka_config, to_core_validation_config,
+    };
+    use crate::crd::{
+        KafkaBackupValidation, KafkaOffsetResetSpec, KafkaOffsetRollbackSpec, KafkaRestore,
+    };
+    use kafka_backup_core::{
+        config::{KafkaConfig, SaslMechanism, SecurityProtocol},
+        oauth::ProviderConfig,
+        schema_registry::{SchemaRegistryAuth, SchemaRegistryOAuth},
+    };
+    use serde_json::{json, Value};
+
+    fn cluster(protocol: &str) -> Value {
+        json!({
+            "bootstrapServers": ["broker.example:9092"],
+            "securityProtocol": protocol,
+            "oauth": {
+                "provider": "broker",
+                "extensions": {"logicalCluster": "lkc-example", "identityPoolId": "pool-example"}
+            }
+        })
+    }
+
+    fn providers(root: &Path) -> Value {
+        let provider = json!({
+            "tokenEndpointUrl": "https://issuer.example/token",
+            "clientIdFilePath": root.join("id"),
+            "clientSecretFilePath": root.join("secret")
+        });
+        json!({
+            "providers": {
+                "broker": provider,
+                "registry": provider,
+                "unused": {
+                    "clientIdFilePath": "/outside/id",
+                    "clientSecretFilePath": "/outside/secret"
+                }
+            },
+            "cache": {"refresh_fraction": 0.75}
+        })
+    }
+
+    fn assert_installed(kafka: &KafkaConfig) {
+        assert!(matches!(
+            kafka.security.security_protocol,
+            SecurityProtocol::SaslSsl
+        ));
+        assert!(matches!(
+            kafka.security.sasl_mechanism,
+            Some(SaslMechanism::OAuthBearer)
+        ));
+        assert!(kafka.security.sasl_username.is_none());
+        assert!(kafka.security.sasl_password.is_none());
+        let binding = kafka.security.oauth.as_ref().unwrap();
+        assert_eq!(binding.provider, "broker");
+        assert_eq!(
+            binding.extensions.logical_cluster.as_deref(),
+            Some("lkc-example")
+        );
+        assert_eq!(
+            binding.extensions.identity_pool_id.as_deref(),
+            Some("pool-example")
+        );
+        assert_eq!(
+            kafka
+                .security
+                .sasl_mechanism_plugin_factory
+                .as_ref()
+                .unwrap()
+                .mechanism_name(),
+            "OAUTHBEARER"
+        );
+    }
+
+    #[test]
+    fn invalid_broker_auth_is_rejected_before_resolving_credentials() {
+        let oauth = serde_json::from_value(providers(Path::new("/outside"))).unwrap();
+        let no_binding = json!({"bootstrapServers": ["broker"], "securityProtocol": "OAUTHBEARER"});
+        let mut blank = cluster("SASL_SSL");
+        blank["oauth"]["provider"] = json!(" ");
+        let mut conflict = cluster("SASL_SSL");
+        conflict["saslSecret"] = json!({"name": "unused", "mechanism": "PLAIN"});
+        let oauth_secret = json!({
+            "bootstrapServers": ["broker"], "securityProtocol": "SASL_SSL",
+            "saslSecret": {"name": "unused", "mechanism": "OAUTHBEARER"}
+        });
+        for (spec, providers, expected) in [
+            (no_binding, Some(&oauth), "requires spec.kafkaCluster.oauth"),
+            (
+                cluster("SASL_SSL"),
+                None,
+                "not defined in spec.oauth.providers",
+            ),
+            (
+                cluster("SASL_PLAINTEXT"),
+                Some(&oauth),
+                "requires securityProtocol SASL_SSL",
+            ),
+            (blank, Some(&oauth), "must not be blank"),
+            (conflict, Some(&oauth), "mutually exclusive"),
+            (
+                oauth_secret,
+                Some(&oauth),
+                "requires spec.kafkaCluster.oauth",
+            ),
+        ] {
+            let spec = serde_json::from_value(spec).unwrap();
+            let error = validate_kafka_auth(&spec, providers).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn mounted_broker_auth_reaches_all_five_core_client_paths() {
+        crate::install_crypto_provider();
+        let client =
+            Client::try_from(kube::Config::new("http://127.0.0.1".parse().unwrap())).unwrap();
+        let mount = tempfile::tempdir().unwrap();
+        let mount = mount.path().canonicalize().unwrap();
+        let storage = json!({"storageType": "pvc", "pvc": {"claimName": "test-pvc"}});
+        let broker = cluster("SASL_SSL");
+        let oauth_json = providers(&mount);
+        let oauth: OauthSpec = serde_json::from_value(oauth_json.clone()).unwrap();
+        let broker_spec = serde_json::from_value(broker.clone()).unwrap();
+        let error =
+            build_kafka_config_from_mount(&broker_spec, Some(&oauth), &client, "test", &mount)
+                .await
+                .unwrap_err();
+        assert!(error.to_string().contains("spec.kafkaCluster.oauth"));
+        tokio::fs::write(mount.join("id"), "mounted-client\n")
+            .await
+            .unwrap();
+        tokio::fs::write(mount.join("secret"), "mounted-secret\n")
+            .await
+            .unwrap();
+        let resolved =
+            build_kafka_config_from_mount(&broker_spec, Some(&oauth), &client, "test", &mount)
+                .await
+                .unwrap();
+
+        let mut backup = KafkaBackup::new("test", serde_json::from_value(json!({
+            "kafkaCluster": broker, "oauth": oauth_json, "topics": ["orders"], "storage": storage
+        })).unwrap());
+        let restore = KafkaRestore::new(
+            "test",
+            serde_json::from_value(json!({
+                "kafkaCluster": cluster("OAUTHBEARER"), "oauth": oauth_json,
+                "backupRef": {"name": "test"}, "topics": ["orders"]
+            }))
+            .unwrap(),
+        );
+        let validation = KafkaBackupValidation::new("test", serde_json::from_value(json!({
+            "kafkaCluster": broker, "oauth": oauth_json, "backupRef": {"name": "test"}, "checks": {}
+        })).unwrap());
+        let reset: KafkaOffsetResetSpec = serde_json::from_value(json!({
+            "kafkaCluster": broker, "oauth": oauth_json, "consumerGroups": ["group"],
+            "resetStrategy": "to-earliest", "topics": ["orders"]
+        }))
+        .unwrap();
+        let rollback: KafkaOffsetRollbackSpec = serde_json::from_value(json!({
+            "kafkaCluster": broker, "oauth": oauth_json, "snapshotRef": {"name": "test"}
+        }))
+        .unwrap();
+
+        // Production adapters must use the binding and spec.oauth, and refuse files
+        // outside the real mount. Use our temporary mount for successful handoffs.
+        for error in [
+            build_backup_config(&backup, &client, "test")
+                .await
+                .unwrap_err(),
+            build_restore_config(&restore, &client, "test")
+                .await
+                .unwrap_err(),
+            build_validation_config(&validation, &client, "test")
+                .await
+                .unwrap_err(),
+        ] {
+            assert!(
+                error.to_string().contains("spec.kafkaCluster.oauth"),
+                "{error}"
+            );
+        }
+        backup.spec.kafka_cluster.oauth = None;
+        backup.spec.kafka_cluster.security_protocol = "PLAINTEXT".into();
+        let mut backup = build_backup_config(&backup, &client, "test").await.unwrap();
+        backup.kafka = resolved.clone();
+        let core = to_core_backup_config(&backup, "test", None).unwrap();
+        assert_installed(core.source.as_ref().unwrap());
+        let config = core.oauth.unwrap();
+        assert_eq!(config.providers.len(), 1);
+        let ProviderConfig::OidcClientCredentials(provider) = &config.providers["broker"] else {
+            panic!("expected the mounted OIDC provider");
+        };
+        assert_eq!(provider.client_id, "mounted-client");
+        assert_eq!(provider.client_secret.expose(), "mounted-secret");
+        assert_eq!(config.cache.refresh_fraction, Some(0.75));
+
+        let mut restore = restore;
+        let kafka = build_kafka_config_from_mount(
+            &restore.spec.kafka_cluster,
+            restore.spec.oauth.as_ref(),
+            &client,
+            "test",
+            &mount,
+        )
+        .await
+        .unwrap();
+        restore.spec.kafka_cluster.oauth = None;
+        restore.spec.kafka_cluster.security_protocol = "PLAINTEXT".into();
+        let mut restore = build_restore_config(&restore, &client, "test")
+            .await
+            .unwrap();
+        restore.kafka = kafka;
+        for provider in ["broker", "registry"] {
+            let mut registry = SchemaRegistryConfig::new("https://registry.example");
+            registry.auth = Some(SchemaRegistryAuth::OAuth(SchemaRegistryOAuth::new(
+                provider,
+            )));
+            restore.schema_registry = Some(ResolvedRegistryConfig {
+                registry,
+                oauth: Some(oauth.resolve_provider(provider, &mount).await.unwrap()),
+            });
+            let core = to_core_restore_config(&restore, "test", &backup.storage, None).unwrap();
+            assert_installed(core.target.as_ref().unwrap());
+            assert_eq!(
+                core.oauth.unwrap().providers.len(),
+                if provider == "broker" { 1 } else { 2 }
+            );
+            let Some(SchemaRegistryAuth::OAuth(binding)) = core.schema_registry.unwrap().auth
+            else {
+                panic!("expected registry OAuth");
+            };
+            assert_eq!(binding.provider, provider);
+            assert!(binding.token_source.is_some());
+        }
+
+        let mut validation = validation;
+        validation.spec.kafka_cluster = None;
+        let mut validation = build_validation_config(&validation, &client, "test")
+            .await
+            .unwrap();
+        validation.kafka = Some(resolved);
+        let core = to_core_validation_config(&validation, "test", &backup.storage, None).unwrap();
+        assert_installed(&core.target);
+        for (cluster, oauth, topics) in [
+            (reset.kafka_cluster, reset.oauth, reset.topics),
+            (rollback.kafka_cluster, rollback.oauth, vec![]),
+        ] {
+            let resolved =
+                build_kafka_config_from_mount(&cluster, oauth.as_ref(), &client, "test", &mount)
+                    .await
+                    .unwrap();
+            let core = to_core_target_kafka_config(&resolved, &topics, None).unwrap();
+            assert_installed(&core);
+            assert_eq!(core.topics.include, topics);
+        }
+    }
+}
+
+#[cfg(test)]
 mod produce_api_version_tests {
     use super::*;
 
@@ -414,6 +770,7 @@ mod produce_api_version_tests {
             security_protocol: "PLAINTEXT".to_string(),
             tls: None,
             sasl: None,
+            oauth: None,
             connection: connection(serde_json::json!({ "produceApiVersion": 7 })),
         };
         let core = crate::adapters::core_integration::to_core_connection_config(&resolved);

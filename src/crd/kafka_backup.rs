@@ -1,7 +1,6 @@
 //! KafkaBackup Custom Resource Definition
 
 use chrono::{DateTime, Utc};
-use kafka_backup_core::oauth::ClusterBinding;
 use kafka_backup_core::schema_registry::{
     SchemaBackupOptions, SchemaConnectionConfig, SchemaRegistryTls,
 };
@@ -9,7 +8,7 @@ use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::adapters::{registry_auth_schema, OauthSpec, RegistryAuthSpec};
+use crate::adapters::{registry_auth_schema, OauthClusterBinding, OauthSpec, RegistryAuthSpec};
 
 use crate::adapters::convert_struct_to_crd_json_schema;
 
@@ -179,7 +178,8 @@ pub struct KafkaClusterSpec {
     /// Bootstrap servers
     pub bootstrap_servers: Vec<String>,
 
-    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL, OAUTHBEARER)
+    /// Security protocol (PLAINTEXT, SSL, SASL_PLAINTEXT, SASL_SSL).
+    /// OAUTHBEARER is a TLS-only alias for SASL_SSL with an OAuth binding.
     #[serde(default = "default_security_protocol")]
     pub security_protocol: String,
 
@@ -198,10 +198,11 @@ pub struct KafkaClusterSpec {
 
     /// Which OAuth token provider this cluster authenticates with, and the SASL extensions sent
     /// with its tokens (Confluent Cloud's `logicalCluster` / `identityPoolId`). Required when
-    /// `security_protocol: OAUTHBEARER`; `provider` names a key of the top-level `oauth.providers`.
-    #[serde(default)]
-    #[schemars(schema_with = "convert_struct_to_crd_json_schema")]
-    pub oauth: Option<ClusterBinding>,
+    /// `securityProtocol: OAUTHBEARER`, and supported with `SASL_SSL`.
+    /// `provider` names a key of `spec.oauth.providers`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "crate::adapters::broker_oauth_schema")]
+    pub oauth: Option<OauthClusterBinding>,
 
     /// Kafka TCP connection tuning
     #[serde(skip_serializing_if = "Option::is_none")]

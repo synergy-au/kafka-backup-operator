@@ -54,6 +54,7 @@ fn restore_with_storage_ref() -> KafkaRestore {
                 tls_secret: None,
                 ca_secret: None,
                 sasl_secret: None,
+                oauth: None,
                 connection: None,
             },
             topics: vec!["orders".to_string()],

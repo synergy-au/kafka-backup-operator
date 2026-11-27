@@ -20,6 +20,7 @@ fn restore_spec() -> KafkaRestoreSpec {
             tls_secret: None,
             ca_secret: None,
             sasl_secret: None,
+            oauth: None,
             connection: None,
         },
         topics: vec!["orders".to_string()],

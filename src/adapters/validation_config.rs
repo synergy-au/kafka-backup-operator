@@ -64,7 +64,15 @@ pub async fn build_validation_config(
         resolve_validation_backup_ref(&validation.spec.backup_ref, client, namespace).await?;
 
     let kafka = match &validation.spec.kafka_cluster {
-        Some(kafka_spec) => Some(build_kafka_config(kafka_spec, client, namespace).await?),
+        Some(kafka_spec) => Some(
+            build_kafka_config(
+                kafka_spec,
+                validation.spec.oauth.as_ref(),
+                client,
+                namespace,
+            )
+            .await?,
+        ),
         None => None,
     };
 
